@@ -7,3 +7,5 @@ This repository is built step by step in the tutorial. Ive added some new text.
 I've add yet more text.
 
 And one more change.
+
+This change is local.
