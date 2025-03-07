@@ -11,9 +11,9 @@ from django.views.generic import FormView, CreateView, UpdateView, ListView
 import datetime
 from logger import logger
 from registrar import registrar, registrar2
-from stand_in_cantina.settings import EMAIL_HOST_USER
+from standin_cantina.settings import EMAIL_HOST_USER
 
-from ...standin_cantina.booking.forms import UserRegistrationForm, StandInForm, BookingRequestForm
+from .forms import UserRegistrationForm, StandInForm, BookingRequestForm
 from .models import (
     User,
     AD,
@@ -49,7 +49,7 @@ def index(request, **kwargs):
 
     if not request.user.is_authenticated:
         print('User not logged in. Going to home.html')
-        return render(request, "cantina/home.html", {
+        return render(request, "booking/home.html", {
         'title': 'Home',
         'user': user,
     })
@@ -63,9 +63,9 @@ def index(request, **kwargs):
         pass
 
     print('FINAL STEP')
-    if user.is_stand_in:
-        print('User logged in and stand in. Going to stand_in.html')
-        return render(request, "cantina/stand_in.html", {
+    if user.is_standin:
+        print('User logged in and stand in. Going to standin.html')
+        return render(request, "cantina/standin.html", {
             'title': f'{user.first_name} {user.last_name}',
             'user': user,
             'message': message
@@ -98,7 +98,7 @@ def register_user_view(request):
     return JsonResponse(data, safe=False)
 
 
-def register_stand_in_view(request, user_id):
+def register_standin_view(request, user_id):
     app = 'cantina'
     message = None
 
@@ -109,10 +109,10 @@ def register_stand_in_view(request, user_id):
         return JsonResponse({'user': reg.serialize(), 'status': 'success', 'message': 'Stand-in was created successfully'}, safe=False)
 
     user = User.objects.get(pk=user_id)
-    stand_in_reg_form = str(StandInForm(initial={'user': user}))
+    standin_reg_form = str(StandInForm(initial={'user': user}))
     data = {
         'ok': True,
-        'stand_in_reg_form': stand_in_reg_form,
+        'standin_reg_form': standin_reg_form,
         'message': message,
         }
     return JsonResponse(data, safe=False)
@@ -142,7 +142,7 @@ def user_account_view(request):
 
 
 @login_required
-def stand_in_profile_view(request):
+def standin_profile_view(request):
     user = request.user
     message = ""
     return render(request, "cantina/index.html", {
@@ -182,7 +182,7 @@ def logout(request):
     #         fail_silently=False,
     #     )
 
-    #     if form.cleaned_data["is_stand_in"]:
+    #     if form.cleaned_data["is_standin"]:
     #         self.request.session["pending_user_id"] = user.id  # Store user ID for next step
     #         return redirect("standin_registration")
 
@@ -214,12 +214,12 @@ def registration_pending(request):
 
 @login_required
 def accept_availability(request, availcheck_id, standin_id):
-    stand_in = get_object_or_404(StandIn, id=standin_id)
+    standin = get_object_or_404(StandIn, id=standin_id)
     avail_check = get_object_or_404(AvailCheck, id=availcheck_id)
 
     # Create an Availability entry with is_available=True
     Availability.objects.create(
-        stand_in=stand_in,
+        standin=standin,
         start_date=avail_check.start_date,
         end_date=avail_check.end_date,
         is_available=True,

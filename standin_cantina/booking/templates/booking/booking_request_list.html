@@ -1,0 +1,14 @@
+{% extends "booking/layout.html" %}
+
+{% block body %}
+<h2>My Booking Requests</h2>
+<a href="{% url 'booking:booking_request_create' %}">Create New Request</a>
+<ul>
+    {% for request in booking_requests %}
+        <li>
+            <a href="{% url 'booking:booking_request_edit' request.pk %}">{{ request.project.name }}</a>
+            ({{ request.start_date }} - {{ request.end_date }}) - Status: {{ request.status }}
+        </li>
+    {% endfor %}
+</ul>
+{% endblock %}
