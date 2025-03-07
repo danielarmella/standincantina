@@ -1,0 +1,23 @@
+
+{% extends "admin/change_form.html" %}
+{% block extrahead %}
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    const form = document.querySelector("form");
+    const usernameInput = document.querySelector("#id_username");
+    const passwordInput = document.querySelector("#id_password");
+
+    form.addEventListener("submit", function () {
+        if (!usernameInput.value) {
+            const firstName = document.querySelector("#id_first_name").value.trim().toLowerCase();
+            const lastName = document.querySelector("#id_last_name").value.trim().toLowerCase();
+            usernameInput.value = firstName + lastName;
+        }
+
+        if (!passwordInput.value) {
+            passwordInput.value = "defaultPassword123"; // Replace with a better default or logic
+        }
+    });
+});
+</script>
+{% endblock %}

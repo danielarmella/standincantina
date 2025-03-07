@@ -1,0 +1,135 @@
+{% load static %}
+
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="utf-8">
+        <meta name="viewport" content="initial-scale=1, width=device-width">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="description" content="A Booking Service for stand-ins in Los Angeles, CA">
+        <meta name="author" content="Stand-in Cantina Booking">
+
+        <title>Stand-in Cantina Booking: {% block title %}{% endblock %}</title>
+        {% block favicon %}
+            <link rel="icon" href="{% static 'favicon.ico' %}">
+        {% endblock %}
+        <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.7.1/jquery.min.js"></script>
+        <script data-main="scripts/main" src="{% static 'scripts/require.js' %}"></script>
+        <link rel="manifest" href="/static/manifest.json">
+
+        <link rel="apple-touch-icon" sizes="57x57" href="//img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/blob.png/:/rs=w:57,h:57,m">
+        <link rel="apple-touch-icon" sizes="60x60" href="//img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/blob.png/:/rs=w:60,h:60,m">
+        <link rel="apple-touch-icon" sizes="72x72" href="//img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/blob.png/:/rs=w:72,h:72,m">
+        <link rel="apple-touch-icon" sizes="114x114" href="//img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/blob.png/:/rs=w:114,h:114,m">
+        <link rel="apple-touch-icon" sizes="120x120" href="//img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/blob.png/:/rs=w:120,h:120,m">
+        <link rel="apple-touch-icon" sizes="144x144" href="//img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/blob.png/:/rs=w:144,h:144,m">
+        <link rel="apple-touch-icon" sizes="152x152" href="//img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/blob.png/:/rs=w:152,h:152,m">
+        <link rel="apple-touch-icon" sizes="180x180" href="//img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/blob.png/:/rs=w:180,h:180,m">
+
+        <meta property="og:url" content="https://standincantinabooking.com/">
+        <meta property="og:site_name" content="Stand-in Cantina Booking">
+        <meta property="og:title" content="Stand-in Cantina Booking">
+        <meta property="og:description" content="A Booking Service for stand-ins in Los Angeles, CA">
+        <meta property="og:type" content="website">
+        <meta property="og:image" content="https://img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/logo-bc491e1.jpeg">
+        <meta property="og:locale" content="en_US">
+        <meta name="twitter:card" content="summary">
+        <meta name="twitter:title" content="Stand-in Cantina Booking">
+        <meta name="twitter:description" content="Linking Casting Directors &amp; Assistant Directors to Professional 2nd Team">
+        <meta name="twitter:image" content="https://img1.wsimg.com/isteam/ip/9d63ec10-8141-49b6-b00d-58fd05a55e5c/logo-bc491e1.jpeg">
+        <meta name="twitter:image:alt" content="Stand-in Cantina Booking">
+        <meta name="theme-color" content="#fcfcf5">
+
+        <style data-inline-fonts="">
+            /* latin-ext */
+            @font-face {
+                font-family: 'Libre Baskerville';
+                font-style: normal;
+                font-weight: 400;
+                font-display: swap;
+                src: url(https://img1.wsimg.com/gfonts/s/librebaskerville/v14/kmKnZrc3Hgbbcjq75U4uslyuy4kn0qNXaxMICA.woff2) format('woff2');
+                unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+            }
+
+            /* latin */
+            @font-face {
+                font-family: 'Libre Baskerville';
+                font-style: normal;
+                font-weight: 400;
+                font-display: swap;
+                src: url(https://img1.wsimg.com/gfonts/s/librebaskerville/v14/kmKnZrc3Hgbbcjq75U4uslyuy4kn0qNZaxM.woff2) format('woff2');
+                unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+            }
+        </style>
+
+        <!-- http://getbootstrap.com/docs/5.1/ -->
+        <!-- <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" integrity="sha384-1BmE4kWBq78iYhFldvKuhfTAU6auU8tT94WrHftjDbrCEXSU1oBoqyl2QvZ6jIW3" crossorigin="anonymous"> -->
+        <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" integrity="sha384-QWTKZyjpPEjISv5WaRU9OFeRpok6YctnYmDr5pNlyT2bRjXh0JMhjY6hW+ALEwIH" crossorigin="anonymous">
+
+        <script src="{% static 'scripts/cantina.js' %}"></script>
+
+        <link href="{% static 'og_styles.css' %}" rel="stylesheet">
+        <link href="{% static 'cantina_styles.css' %}" rel="stylesheet">
+        {% block head %} {% endblock %}
+    </head>
+
+    <body class="x  x-fonts-league-spartan  x-fonts-libre-baskerville">
+        <header>
+            <nav class="navbar-expand-md">
+                <div class="navbar container-fluid">
+                    <button aria-controls="navbar" aria-expanded="false" aria-label="Toggle navigation" class="navbar-toggler" data-bs-target="#navbar" data-bs-toggle="collapse" type="button">
+                        <span class="navbar-toggler-icon"></span>
+                    </button>
+                    <div class="collapse navbar-collapse nav-menu" id="navbar">
+                        <ul class="navbar-nav ms-auto mt-0">
+                            <li class="nav-item">
+                                <a class="nav-link" id="home-nav-link" data-view="home" href="{% url 'cantina:index' %}">Home</a>
+                            </li>
+                            <li class="nav-item" style='display: none;'>
+                                <a class="nav-link" id='registration_pending_nav_link' data-view="registration_pending" href="" style='display: none;'></a>
+                            </li>
+                            {% if user.is_authenticated %}
+                                <li class="nav-item">
+                                    <a class="nav-link" data-view="user_account" href="">User account</a>
+                                </li>
+                                {% if user.is_stand_in %}
+                                    <li class="nav-item">
+                                        <a class="nav-link" id='standin_profile_nav_link' data-view="standin_profile" href="">Stand-in profile</a>
+                                    </li>
+                                {% endif %}
+                                <li class="nav-item">
+                                    <a class="nav-link" data-view="logout" href="">Log out</a>
+                                </li>
+                            {% else %}
+                                <li class="nav-item">
+                                    <a class="nav-link" data-view="register_user" href="">Register</a>
+                                </li>
+                                <li class="nav-item">
+                                    <a class="nav-link" data-view="login" href="">Log in</a>
+                                </li>
+                            {% endif %}
+                        </ul>
+                    </div>
+                </div>
+            </nav>
+        </header>
+
+        <main class="container">
+            {% block main %}Main{% endblock %}
+        </main>
+
+        <sidebar>
+            {% block sidebar %}{% endblock %}
+        </sidebar>
+
+        <footer class="mb-5 small text-center">
+            {% block footer %}{% endblock %}
+        </footer>
+
+        <!-- https://getbootstrap.com/docs/5.1/getting-started/introduction/ -->
+        <!-- The following script is needed for Bootstrap. and should be placed near the end of your pages, right before the closing </body> tag, to enable them. -->
+        <script crossorigin="anonymous" src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js" integrity="sha384-ka7Sk0Gln4gmtz2MlQnikT1wXgYsOg+OMhuP+IlRH9sENBO0LRn5q+8nbTov4+1p"></script>
+    </body>
+
+</html>

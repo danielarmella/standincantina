@@ -1,0 +1,48 @@
+header {
+    background-color: rgb(22, 22, 22);
+    position: sticky;
+    top: 0px;
+    z-index: 2;
+}
+
+main {
+    position: static;
+}
+
+.navbar-nav {
+    margin-top: 0px;
+}
+
+.nav-link {
+    font-weight: bold;
+    color: #E8B64C;
+}
+
+.nav-link:hover {
+    color: #FFD987;
+}
+
+.form-group {
+    margin: 0 0 1.5rem 0;
+}
+
+.form-check-input {
+    height: 5rem;
+    width: 5rem;
+    padding: 0;
+    box-shadow: 0 0 10px rgba(0, 0, 255, 0.5);
+}
+
+.checkbox_parent {
+    display: flex;
+    justify-content: flex-start;
+    gap: 20px;
+}
+
+.success_message {
+    color: green;
+}
+
+.error_message {
+    color: red;
+}

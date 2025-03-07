@@ -1,0 +1,17 @@
+{% extends "cantina/layout.html" %}
+{% load static %}
+
+
+{% block title %}
+    {{ title }}
+{% endblock %}
+
+
+{% block main %}
+    {% if message %}
+    <h1>This is a Stand-in</h1>
+        <div class='message'>
+            {{ message }}
+        </div>
+    {% endif %}
+{% endblock %}

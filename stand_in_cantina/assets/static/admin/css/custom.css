@@ -1,0 +1,64 @@
+.field-display_headshot label {
+    display: none;
+}
+
+.field-display_main_image label {
+    display: none;
+}
+
+.field-list_uploads label {
+    display: none;
+}
+
+.field-display_main_image {
+    display: flex;
+    /* flex-flow: column wrap; */
+    gap: 20px;
+}
+
+.media_upload {
+    padding-right: 10px;
+}
+
+.readonly {
+    display: flex;
+    flex-flow: column wrap;
+}
+
+/* Create a grid layout for fieldsets */
+.fieldsets {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr); /* 6 equal columns */
+    gap: 10px; /* Space between fieldsets */
+}
+
+/* Define the container that holds the fieldsets */
+.fieldset.module {
+    display: flex;
+    flex-flow: column wrap;
+}
+
+/* Style for fieldsets with col2 class (takes 2 out of 6 columns) */
+fieldset.col2 {
+    grid-column: span 2;
+}
+
+/* Style for fieldsets with col3 class (takes 3 out of 6 columns) */
+fieldset.col3 {
+    grid-column: span 3;
+}
+
+/* Style for fieldsets with col4 class (takes 4 out of 6 columns) */
+fieldset.col4 {
+    grid-column: span 4;
+}
+
+/* Style for fieldsets with col6 class (takes 6 out of 6 columns) */
+.col6 {
+    grid-column: span 6;
+}
+
+.submit-row {
+    display: flex;
+    flex-flow: row wrap;
+}

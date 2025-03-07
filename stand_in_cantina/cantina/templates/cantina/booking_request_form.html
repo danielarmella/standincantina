@@ -1,0 +1,14 @@
+{% extends "cantina/layout.html" %}
+
+{% block body %}
+<h2>{% if object %}Edit{% else %}New{% endif %} Booking Request</h2>
+<form method="post" enctype="multipart/form-data">
+    {% csrf_token %}
+    {{ form.as_p }}
+
+    <label for="id_images">Upload Images:</label>
+    <input type="file" name="images" id="id_images" multiple>
+
+    <button type="submit">Submit</button>
+</form>
+{% endblock %}

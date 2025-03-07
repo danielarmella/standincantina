@@ -1,0 +1,14 @@
+{% extends "cantina/index.html" %}
+{% load static %}
+
+{% block title %}
+    {{ title }}
+{% endblock %}
+
+{% block register_user %}
+<form method="post">
+    {% csrf_token %}
+    {{ user_form.as_p }}
+    <button type="submit">Next</button>
+</form>
+{% endblock %}
