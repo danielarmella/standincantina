@@ -10,6 +10,11 @@ app_name = 'booking'
 
 urlpatterns = [
     path("", views.index, name="index"),
+    
+    # path("strip", views.strip, name="strip"),
+    # path("teststrip", views.teststrip, name="teststrip"),
+    path("fix_booking_dates", views.fix_booking_dates, name="fix_booking_dates"),
+
     path("login", views.login_view, name="login"),
     path("logout", views.logout_view, name="logout"),
     path("register_user", views.register_user_view, name="register_user"),

@@ -10,6 +10,7 @@ def logger(request, app):
     # Attempt to sign user in
     username = request.POST.get('username').lower()
     password = request.POST.get("password")
+    print(f'{username = }\n{password = }')
     user = authenticate(request, username=username, password=password)
 
     # Check if authentication successful
@@ -17,6 +18,7 @@ def logger(request, app):
         login(request, user)
         return HttpResponseRedirect(reverse(f"{app}:index"), caller='logger')
     else:
+        print(f'login failed')
         context = {}
         context['success'] = False
         if username == "":

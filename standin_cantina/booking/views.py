@@ -3,6 +3,7 @@ from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core.mail import send_mail
+from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import HttpResponse, HttpResponseRedirect, get_object_or_404, redirect, render
 from django.urls import reverse, reverse_lazy
@@ -54,6 +55,7 @@ def index(request, **kwargs):
         'user': user,
     })
 
+    print(f'User is logged in as {user}')
 
     message = ""
     try:
@@ -64,15 +66,39 @@ def index(request, **kwargs):
 
     print('FINAL STEP')
     if user.is_standin:
-        print('User logged in and stand in. Going to standin.html')
-        return render(request, "cantina/standin.html", {
-            'title': f'{user.first_name} {user.last_name}',
+        standin = user.standin
+        print(f'User logged in as stand in {standin}. Going to standin.html')
+
+        # Get Availabilities
+        today = datetime.date.today()
+        three_months_later = today + datetime.timedelta(days=90)
+
+        availabilities = Availability.objects.filter(standin=standin).filter(
+            Q(start_date__gte=today, start_date__lte=three_months_later) |
+            Q(end_date__gte=today, end_date__lte=three_months_later))
+
+        # Get AvailChecks
+        avail_checks = AvailCheck.objects.filter(standins=standin)
+
+        # Get Bookings
+        bookings = Booking.objects.filter(standin=standin)
+        for booking in bookings:
+            print(f'{booking.standin = }')
+            print(f'{booking.project = }')
+            print(f'{booking.start_date = }')
+            print(f'{booking.end_date = }')
+
+        return render(request, "booking/standin.html", {
+            'title': f'{user.first_name.capitalize()} {user.last_name.capitalize()}',
             'user': user,
+            'availabilities': availabilities,
+            'avail_checks': avail_checks,
+            'bookings': bookings,
             'message': message
         })
 
     print('user.html')
-    return render(request, "cantina/user.html", {
+    return render(request, "booking/user.html", {
         'title': f'{user.first_name} {user.last_name}',
         'user': user,
         'message': message
@@ -80,7 +106,7 @@ def index(request, **kwargs):
 
 
 def register_user_view(request):
-    app = 'cantina'
+    app = 'booking'
     message = None
 
     if request.method == "POST":
@@ -99,7 +125,7 @@ def register_user_view(request):
 
 
 def register_standin_view(request, user_id):
-    app = 'cantina'
+    app = 'booking'
     message = None
 
     if request.method == "POST":
@@ -119,7 +145,7 @@ def register_standin_view(request, user_id):
 
 
 def login_view(request):
-    app = 'cantina'
+    app = 'booking'
     if request.method == "POST":
         return logger(request, app=app)
     return render(request, f'{app}/index.html')
@@ -127,14 +153,14 @@ def login_view(request):
 
 def logout_view(request):
     logout(request)
-    return HttpResponseRedirect(reverse("cantina:index"))
+    return HttpResponseRedirect(reverse("booking:index"))
 
 
 @login_required
 def user_account_view(request):
     user = request.user
     message = ""
-    return render(request, "cantina/index.html", {
+    return render(request, "booking/index.html", {
         'title': 'Home',
         'user': user,
         'message': message
@@ -145,7 +171,7 @@ def user_account_view(request):
 def standin_profile_view(request):
     user = request.user
     message = ""
-    return render(request, "cantina/index.html", {
+    return render(request, "booking/index.html", {
         'title': 'Home',
         'user': user,
         'message': message
@@ -156,7 +182,7 @@ def standin_profile_view(request):
 def logout(request):
     user = request.user
     message = ""
-    return render(request, "cantina/index.html", {
+    return render(request, "booking/index.html", {
         'title': 'Home',
         'user': user,
         'message': message
@@ -165,7 +191,7 @@ def logout(request):
 
 # class UserRegistrationView(FormView):
 #     model = User
-    # template_name = "cantina/registration_step1.html"
+    # template_name = "booking/registration_step1.html"
     # form_class = UserRegistrationForm
     # success_url = reverse('standin_registration') if form['is_standin'] else reverse('registration_pending')
 
@@ -190,7 +216,7 @@ def logout(request):
 
 
 # class StandInRegistrationView(FormView):
-#     template_name = "cantina/registration_step2.html"
+#     template_name = "booking/registration_step2.html"
 #     form_class = StandInForm
 
 #     def dispatch(self, request, *args, **kwargs):
@@ -236,7 +262,7 @@ def reject_availability(request):
 class BookingRequestCreateView(CreateView):
     def get(self, request):
         form = BookingRequestForm()
-        return render(request, "cantina/booking_request_form.html", {"form": form})
+        return render(request, "booking/booking_request_form.html", {"form": form})
 
     def post(self, request):
         form = BookingRequestForm(request.POST)
@@ -271,9 +297,80 @@ class BookingRequestUpdateView(UpdateView):
 
 class BookingRequestListView(ListView):
     model = BookingRequest
-    template_name = "cantina/booking_request_list.html"
+    template_name = "booking/booking_request_list.html"
     context_object_name = "booking_requests"
 
     # def get_queryset(self):
     #     """Show only the booking requests submitted by the logged-in AD."""
     #     return BookingRequest.objects.filter(ad=self.request.user)
+
+
+def strip(request):
+    users = User.objects.all()
+    for user in users:
+        print(f'{user = }')
+        user.password = user.password.strip()
+        if not user.date_joined:
+            user.date_joined = datetime.datetime.now()
+        user.phone = '1-215-917-7265'
+        user.username = user.username.strip()
+        user.first_name = user.first_name.strip()
+        user.last_name = user.last_name.strip()
+        user.email = user.email.strip()
+        user.save()
+    return HttpResponse('done')
+
+
+def teststrip(request):
+    dan = User.objects.get(id=1)
+    print(f'|{dan.id}|')
+    print(f'|{dan.password}|')
+    print(f'|{dan.last_login}|')
+    print(f'|{dan.is_superuser}|')
+    print(f'|{dan.username}|')
+    print(f'|{dan.first_name}|')
+    print(f'|{dan.last_name}|')
+    print(f'|{dan.is_staff}|')
+    print(f'|{dan.is_active}|')
+    print(f'|{dan.date_joined}|')
+    print(f'|{dan.phone}|')
+    print(f'|{dan.birthday}|')
+    print(f'|{dan.is_approved}|')
+    print(f'|{dan.is_standin}|')
+    print(f'|{dan.email}|')
+
+    return HttpResponse('Done Testing strip')
+
+
+def fix_booking_dates(request):
+    bookings = Booking.objects.all()
+    print(f'{bookings = }')
+
+    for booking in bookings:
+        print(f'{booking = }')
+        print(f'{booking.id = }')
+        print(f'{type(booking.start_date) = }')
+        match booking.id:
+            case 3:
+                booking.start_date = datetime.date(2024, 10, 6)
+                booking.end_date = datetime.date(2024, 10, 15)
+            case 4:
+                booking.start_date = datetime.date(2025, 1, 29)
+                booking.end_date = datetime.date(2025, 2, 28)
+            case 5:
+                booking.start_date = datetime.date(2024, 3, 10)
+                booking.end_date = datetime.date(2024, 10 ,5)
+            case 15:
+                booking.start_date = datetime.date(2025, 4, 12)
+                booking.end_date = datetime.date(2025, 4, 12)
+            case 16:
+                booking.start_date = datetime.date(2025, 2, 15)
+                booking.end_date = datetime.date(2025, 2, 15)
+            case 17:
+                booking.start_date = datetime.date(2025, 3, 20)
+                booking.end_date = datetime.date(2025, 3, 20)
+            case _:
+                continue  # Skip cases that don't match
+        booking.save()
+
+    return HttpResponse('fix_booking_dates')
