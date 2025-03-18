@@ -22,9 +22,8 @@ SKIN_TONE_CHOICES = [
     ('medium', 'Medium white to olive'),
     ('olive', 'Olive to moderate brown'),
     ('brown', 'Brown to dark brown'),
-    ('dark', 'Very dark brown to black'),
+    ('dark', 'Very dark brown to black')
 ]
-
 HAIR_COLOR_CHOICES = [
     ('black', 'Black'),
     ('brown', 'Brown'),
@@ -299,7 +298,7 @@ class HairColor(models.Model):
     standin = models.ForeignKey(StandIn, on_delete=models.CASCADE, related_name="hair_colors")
     hair_color = models.CharField('Hair color', max_length=15, choices=HAIR_COLOR_CHOICES, blank=False, default="")
 
-    def  __str__(self):
+    def __str__(self):
         return f'{self.hair_color.capitalize()}'
 
     class Meta:
@@ -374,7 +373,7 @@ class Review(models.Model):
         verbose_name = 'Review'
         verbose_name_plural = 'Reviews'
 
-    def  __str__(self):
+    def __str__(self):
         return f'{self.date}'
 
 
@@ -423,7 +422,7 @@ class ActorStandInMatch(models.Model):
                 fields=['actor', 'standin'],
                 name='unique_actor_standin_match',
                 violation_error_message="This stand-in has already been matched to this actor.")
-                ]
+        ]
         verbose_name = 'Actor/Stand-in match'
         verbose_name_plural = 'Actor/Stand-in matches'
 
@@ -433,195 +432,307 @@ def validate_avail_date(day):
         raise ValidationError("This date cannot be in the past.")
 
 
+def adjust_overlap(new_range, overlap):
+    # Adjust overlapping entries
+    if overlap.start_date < new_range['start_date'] and overlap.end_date > new_range['end_date']:
+        # Split the existing entry into two non-overlapping parts
+        AvailabilityDateRange.objects.create(
+            availability=overlap.availability,
+            start_date=new_range['end_date'] + timedelta(days=1),
+            end_date=overlap.end_date)
+        overlap.end_date = new_range['start_date'] - timedelta(days=1)
+        overlap.save()
+    elif overlap.start_date >= new_range['start_date'] and overlap.end_date <= new_range['end_date']:
+        # Delete the fully overlapped entry
+        overlap.delete()
+    elif overlap.start_date < new_range['start_date'] <= overlap.end_date:
+        # Adjust the end date of the existing entry
+        overlap.end_date = new_range['start_date'] - timedelta(days=1)
+        overlap.save()
+    elif overlap.start_date <= new_range['end_date'] < overlap.end_date:
+        # Adjust the start date of the existing entry
+        overlap.start_date = new_range['end_date'] + timedelta(days=1)
+        overlap.save()
+
+
+def adjust_new_range(new_range, overlap):
+    # Adjust overlapping entries
+    if overlap.start_date <= new_range['start_date'] and overlap.end_date >= new_range['end_date']:
+        # Delete the fully overlapped entry with no status key
+        return new_range
+    elif overlap.start_date > new_range['start_date'] and overlap.end_date < new_range['end_date']:
+        # Split the existing entry into two non-overlapping parts
+        new_range['start_date2'] = overlap.end_date + timedelta(days=1)
+        new_range['end_date2'] = new_range['end_date']
+        new_range['end_date'] = overlap.start_date - timedelta(days=1)        
+        new_range['status'] = 'split'
+    elif overlap.start_date < new_range['start_date'] <= overlap.end_date:
+        # Adjust the start date of the new entry
+        new_range['start_date'] = overlap.end_date + timedelta(days=1)
+        new_range['status'] = 'save'
+    elif overlap.start_date <= new_range['end_date'] < overlap.end_date:
+        # Adjust the end date of the new entry
+        new_range['end_date'] = overlap.start_date - timedelta(days=1)
+        new_range['status'] = 'save'
+    return new_range
+
+
+class AvailabilityStatus(models.TextChoices):
+    AVAILABLE = "available", "Available"
+    UNAVAILABLE = "unavailable", "Unavailable"
+    BOOKED = "booked", "Booked"
+    
+
 class Availability(models.Model):
     standin = models.ForeignKey(StandIn, on_delete=models.CASCADE, related_name="avails")
-    start_date = models.DateField(validators=[
-        MinValueValidator(date(2020, 1, 1), 'No ancient start dates'),
-    ], help_text="yyyy-mm-dd", null=False, blank=False)
-    end_date = models.DateField(validators=[validate_avail_date], help_text="yyyy-mm-dd", null=False, blank=False)
-    is_available = models.BooleanField(default=True)  # True for availability, False for unavailability
+    status = models.CharField(max_length=15, choices=AvailabilityStatus.choices, default=AvailabilityStatus.UNAVAILABLE)
+    booking = models.ForeignKey('Booking', on_delete=models.SET_NULL, null=True, blank=True, related_name="avail", help_text='Must be a booking not a project.')
     notes = models.TextField(blank=True)
-    booked = models.ForeignKey('Booking', on_delete=models.SET_NULL, null=True, blank=True, related_name="avail", help_text='Must be a booking not a project.')
-
-    _overlap_handled = False  # Temporary private attribute to prevent recursion. Reload will reset.
 
     class Meta:
         db_table = 'booking_availability'
-        ordering = ['-start_date']
         verbose_name = 'Availability'
         verbose_name_plural = 'Availabilities'
 
+    def __str__(self):
+        availabilities = ", ".join(str(dr) for dr in self.availability_date_ranges.all())
+        return f"{self.status} | {availabilities or 'No date ranges'}"
+
+    def resolve_overlaps(self, new_ranges):
+        # Handles merging, replacing, and adjusting date ranges based on existing Availability.
+        with transaction.atomic():
+            updated_ranges = []
+            for new_range in new_ranges:
+                overlapping_ranges = AvailabilityDateRange.objects.filter(
+                    availability__standin=self.standin,
+                    start_date__lte=new_range['end_date'] + timedelta(days=1),
+                    end_date__gte=new_range['start_date'] - timedelta(days=1)
+                ).select_related('availability')
+
+                for overlap in overlapping_ranges:
+                    overlap_avail = overlap.availability
+                    
+                    if overlap_avail.status == self.status and overlap_avail.booking == self.booking and overlap_avail.notes == self.notes:
+                        # Merge overlaps
+                        new_range['start_date'] = min(overlap.start_date, new_range['start_date'])
+                        new_range['end_date'] = max(overlap.end_date, new_range['end_date'])
+                        overlap.delete()
+
+                    elif self.status == 'available':		
+                        if overlap_avail.status == 'available' or (not overlap_avail.status == 'available' and not overlap_avail.booking):
+                            # Overwrite/adjust overlap
+                            adjust_overlap(new_range, overlap)
+
+                        elif not overlap_avail.status == 'available' and overlap_avail.booking:
+                            # Adjust around booked ranges
+                            new_range = adjust_new_range(new_range, overlap)
+
+                    elif not self.status == 'available' and not self.booking:
+                        if overlap_avail.status == 'available' or (not overlap_avail.status == 'available' and not overlap_avail.booking):
+                            # Overwrite/adjust overlap
+                            adjust_overlap(new_range, overlap)
+
+                        elif not overlap_avail.status == 'available' and overlap_avail.booking:
+                            # Adjust around booked ranges
+                            new_range = adjust_new_range(new_range, overlap)
+
+                    elif not self.status == 'available' and self.booking:
+                        # Do not save if overlapping any status <> 'available'
+                        if overlap_avail.status == 'available':
+                            adjust_overlap(new_range, overlap)
+                        else:
+                            return False # Block saving this range
+                        
+                AvailabilityDateRange.objects.bulk_update(overlapping_ranges, ['start_date', 'end_date'])
+
+                if 'status' in new_range:
+                    if new_range['status'] == 'split':
+                        new_ranges.append({'start_date': new_range['start_date2'], 'end_date': new_range['end_date2']})
+                    updated_ranges.append({'start_date': new_range['start_date'], 'end_date': new_range['end_date']})
+
+            # Save all new or adjusted ranges
+            for range_data in updated_ranges:
+                AvailabilityDateRange.objects.create(
+                    availability=self,
+                    start_date=range_data['start_date'],
+                    end_date=range_data['end_date'])
+
     def clean(self):
         super().clean()  # Call parent clean method
-        if not isinstance(self.start_date, date) or not isinstance(self.end_date, date):
-            raise ValidationError("Please enter a date in the yyyy-mm-dd format.")
-        if self.start_date > self.end_date:
-            raise ValidationError("Start date cannot be after the end date.")
-        if self.booked:
-            if self.is_available and self.booked:
+        if self.booking:
+            if self.status == 'available':
                 raise ValidationError('Cannot be booked and available.')
-            if self.standin != self.booked.standin:
+            if self.standin != self.booking.standin:
                 raise ValidationError('Stand-in doesnt match the booking stand-in.')
-            if self.start_date != self.booked.start_date or self.end_date != self.booked.end_date:
+            
+            # Ensure Availability dates match Booking dates
+            availability_dates = {(a.start_date, a.end_date) for a in self.availability_date_ranges.all()}
+            booking_dates = {(b.start_date, b.end_date) for b in self.booking.booking_date_ranges.all()}
+            if availability_dates != booking_dates:
                 raise ValidationError('Availability dates do not match Booking dates.')
 
-    def resolve_overlaps(self):
-        overlapping_entries = Availability.objects.filter(
-            standin=self.standin,
-            start_date__lte=self.end_date + timedelta(days=1),
-            end_date__gte=self.start_date - timedelta(days=1),
-        ).exclude(id=self.id)
-
-        for entry in overlapping_entries:
-            if entry.is_available == self.is_available and entry.booked == self.booked and entry.notes == self.notes:
-                # Merge overlapping entries
-                self.start_date = min(self.start_date, entry.start_date)
-                self.end_date = max(self.end_date, entry.end_date)
-                entry.delete()
-            else:
-                # Adjust overlapping entries
-                if entry.start_date < self.start_date and entry.end_date > self.end_date:
-                    # Split the existing entry into two non-overlapping parts
-                    new_avail = Availability.objects.create(
-                        standin=self.standin,
-                        start_date=entry.start_date,
-                        end_date=self.start_date - timedelta(days=1),
-                        is_available=entry.is_available,
-                        notes=entry.notes,
-                    )
-                    new_avail.end_date = self.start_date - timedelta(days=1)
-                    new_avail._overlap_handled = True
-                    super(Availability, new_avail).save()
-
-                    entry.start_date = self.end_date + timedelta(days=1)
-                    super(Availability, entry).save()
-                elif entry.start_date >= self.start_date and entry.end_date <= self.end_date:
-                    # Delete the fully overlapped entry
-                    entry.delete()
-                elif entry.start_date < self.start_date <= entry.end_date:
-                    # Adjust the end date of the existing entry
-                    entry.end_date = self.start_date - timedelta(days=1)
-                    entry.save()
-                elif entry.start_date <= self.end_date < entry.end_date:
-                    # Adjust the start date of the existing entry
-                    entry.start_date = self.end_date + timedelta(days=1)
-                    entry.save()
-
     def save(self, *args, **kwargs):
-        self.clean()
-        if not self._overlap_handled:
-            self._overlap_handled = True  # Set the flag to prevent recursion
-            self.resolve_overlaps()  # Call the method to handle overlaps
+        # Custom save logic to resolve availability overlaps before saving.
+        self.full_clean()
+        new_ranges = [{'start_date': dr.start_date, 'end_date': dr.end_date} for dr in self.availability_date_ranges.all()]
+        
+        if self.resolve_overlaps(new_ranges) is False:
+            raise ValidationError("Overlapping availability cannot be saved.")
+        
         super().save(*args, **kwargs)
 
+
+class AvailabilityDateRange(models.Model):
+    availability = models.ForeignKey(Availability, on_delete=models.CASCADE, related_name="availability_date_ranges")
+    start_date = models.DateField(validators=[
+        MinValueValidator(date(2020, 4, 1), 'No ancient start dates'),
+    ], help_text="yyyy-mm-dd", null=False, blank=False)
+    end_date = models.DateField(validators=[validate_avail_date], default=models.F('start_date'), help_text="yyyy-mm-dd", null=False, blank=True)
+
+    class Meta:
+        ordering = ['-start_date']
+        constraints = [
+            models.CheckConstraint(check=models.Q(start_date__lte=models.F('end_date')), name='valid_date_range'),
+            models.UniqueConstraint(fields=['availability', 'start_date', 'end_date'], name='unique_availability_dates')
+        ]
+
     def __str__(self):
-        status = "Available" if self.is_available else "Unavailable"
-        return f'{self.start_date} - {self.end_date} | {status}'
+        return f"{self.start_date} - {self.end_date}" if self.start_date != self.end_date else f"{self.start_date}"
+
+    def clean(self):
+        super().clean()  # Call parent clean method
+        # Ensure dates are not Null
+        if self.start_date is None or self.end_date is None:
+            raise ValidationError("Start date and end date cannot be empty.")
+	    # Ensure dates are valid date tyes
+        if not isinstance(self.start_date, date) or not isinstance(self.end_date, date):
+            raise ValidationError("Please enter valid dates.")
+        # Ensure start_date <= end_date
+        if self.start_date > self.end_date:
+            raise ValidationError("Start date cannot be after end date.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 
 class Booking(models.Model):
     standin = models.ForeignKey(StandIn, on_delete=models.CASCADE, related_name="standin_bookings")
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="project_bookings")
-    start_date = models.DateField('Start date', help_text="yyyy-mm-dd", null=False, blank=False)
-    end_date = models.DateField('End date', help_text="yyyy-mm-dd", null=False, blank=False)
     email_reminder_sent = models.BooleanField('Email reminder sent', default=False)
-
-    def __str__(self):
-        return f'{self.start_date} - {self.end_date} | {self.standin} on {self.project.name}'
 
     class Meta:
         verbose_name = 'Booking'
         verbose_name_plural = 'Bookings'
+
+    def __str__(self):
+        booking_date_ranges = ", ".join(str(dr) for dr in self.booking_date_ranges.all())
+        return f"{self.project}: {booking_date_ranges or 'No date ranges'}"
+
+    def clean(self):
+        # Ensure no booking conflicts with other projects
+        project_conflicts = Booking.objects.filter(standin=self.standin).exclude(project=self.project)
+        for booking in project_conflicts:
+            for existing_range in booking.booking_date_ranges.all():
+                for new_range in self.booking_date_ranges.all():
+                    if not (new_range.end_date < existing_range.start_date or new_range.start_date > existing_range.end_date):
+                        raise ValidationError(f"{self.standin} is already booked on {booking.project} on overlaping days.")
+                    
+        # Ensure no overlapping Bookings on this or any project
+        for new_range in self.booking_date_ranges.all():
+            if BookingDateRange.objects.filter(
+                booking__standin=self.standin,
+                start_date__lte=new_range.end_date,
+                end_date__gte=new_range.start_date
+            ).exclude(booking=self).exists():
+                raise ValidationError(f"{self.standin.user.first_name} is already booked on overlapping day(s).")
+
+    def save(self, *args, **kwargs):
+        """Ensure the corresponding Availability is created or updated when a Booking is saved."""
+        with transaction.atomic():
+            self.clean()
+            super().save(*args, **kwargs)
+            
+            # Ensure the stand-in's availability reflects the booking
+            availability = Availability.objects.filter(booking=self).first()
+            if not availability:
+                availability = Availability.objects.create(
+                    standin=self.standin,
+                    project=self.project,
+                    status='booked',
+                    booking=self
+                )
+            
+            # Update availability's date ranges to match booking
+            availability.availability_date_ranges.all().delete()
+            for date_range in self.booking_date_ranges.all():
+                AvailabilityDateRange.objects.create(
+                    availability=availability,
+                    start_date=date_range.start_date,
+                    end_date=date_range.end_date
+                )
+            
+            availability.status = 'booked'
+            availability.booking = self
+            availability.save()
+
+    def delete(self, *args, **kwargs):
+        # Mark availability as available before deleting the booking.
+        with transaction.atomic():
+            if hasattr(self, 'availability') and self.availability:
+                self.availability.status = 'available'
+                self.availability.notes += f'  Booking for {self} DELETED on {now()}'
+                self.availability.booking = None
+                self.availability.save()
+            super().delete(*args, **kwargs)
+
+
+class BookingDateRange(models.Model):
+    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name="booking_date_ranges")
+    start_date = models.DateField(validators=[
+        MinValueValidator(date(2020, 4, 1), 'No ancient start dates'),
+    ], help_text="yyyy-mm-dd", null=False, blank=False)
+    end_date = models.DateField(validators=[validate_avail_date], default=models.F('start_date'), help_text="yyyy-mm-dd", null=False, blank=True)
+
+    class Meta:
         ordering = ['-start_date']
+        constraints = [
+            models.CheckConstraint(check=models.Q(start_date__lte=models.F('end_date')), name='valid_date_range'),
+            models.UniqueConstraint(fields=['booking', 'start_date', 'end_date'], name='unique_availability_dates')
+        ]
 
-    def resolve_overlaps(self):
-        # Check availability
-        overlapping_avails = Availability.objects.filter(
-            standin=self.standin,
-            start_date__lte=self.end_date,
-            end_date__gte=self.start_date,
-            is_available=False,
-        )
-        if overlapping_avails:
-            unavail = ""
-            for avail in overlapping_avails:
-                unavail += f'{avail.start_date} to {avail.end_date}\n'
-            return False, f"{self.standin} is unavailable on the following conflicting dates:\n{unavail}"
-
-        # Check overlaping bookings
-        overlapping_entries = Booking.objects.filter(
-            standin=self.standin,
-            start_date__lte=self.end_date,
-            end_date__gte=self.start_date,
-        ).exclude(id=self.id)
-
-        for entry in overlapping_entries:
-            if entry.project == self.project:
-                # Merge overlapping entries
-                self.start_date = min(self.start_date, entry.start_date)
-                self.end_date = max(self.end_date, entry.end_date)
-                entry.delete()
-            else:
-                return False, f"{self.standin} is already booked from {entry.start_date} to {entry.end_date} for {entry.project.name}."
-        return True, "No conflicts."
+    def __str__(self):
+        return f"{self.start_date} - {self.end_date}" if self.start_date != self.end_date else f"{self.start_date}"
 
     def clean(self):
         super().clean()  # Call parent clean method
-
-        # Check for valid dates
+        # Ensure dates are not Null
+        if self.start_date is None or self.end_date is None:
+            raise ValidationError("Start date and end date cannot be empty.")
+	    # Ensure dates are valid date tyes
         if not isinstance(self.start_date, date) or not isinstance(self.end_date, date):
-            raise ValidationError("Please enter a date in the yyyy-mm-dd format.")
-
-        # Check for valid start and end dates
+            raise ValidationError("Please enter valid dates.")
+        # Ensure start_date <= end_date
         if self.start_date > self.end_date:
-            raise ValidationError("Start date cannot be after the end date.")
-
-        # Check for availability and booking overlaps
-        success, message = self.resolve_overlaps()
-        if not success:
-            raise ValidationError(message)
+            raise ValidationError("Start date cannot be after end date.")
 
     def save(self, *args, **kwargs):
-        with transaction.atomic():  # Ensures changes happen together
-            # If updating an existing booking, handle the old Availability record
-            if self.pk:
-                try:
-                    # Fetch the existing booking from the database
-                    old_booking = Booking.objects.get(pk=self.pk)
-                    if old_booking.start_date != self.start_date or old_booking.end_date != self.end_date:
-                        # Booking dates have changed
-                        try:
-                            # Find the Availability associated with the old booking
-                            old_avail = Availability.objects.create(standin=old_booking.standin, start_date=old_booking.start_date, end_date=old_booking.end_date, is_available=True, booked=None, notes=f"Booking for {old_booking.project} canceled or updated. Stand-in now available.")
-                        except Availability.DoesNotExist:
-                            pass  # No Availability was associated with the old booking
-                except Booking.DoesNotExist:
-                    # If the booking doesn't exist, it's a new booking
-                    pass
-
-            # Save the Booking normally
-            super().save(*args, **kwargs)
-
-            # Now, update or create the new Availability record for the current booking dates
-            avail, created = Availability.objects.update_or_create(
-                standin=self.standin,
-                start_date=self.start_date,
-                end_date=self.end_date,
-                defaults={"is_available": False, "booked": self, "notes": f"Booked on {self.project}"}
-            )
+        self.full_clean()
+        super().save(*args, **kwargs)
 
 
 class AvailCheck(models.Model):
     standins = models.ManyToManyField(StandIn, blank=True, related_name='avail_checks')
     project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="avails_requested", null=True, blank=True)
-    start_date = models.DateField(validators=[
-        MinValueValidator(date(2020, 1, 1), 'No ancient start dates'),
-    ], help_text="yyyy-mm-dd", null=False, blank=False)
-    end_date = models.DateField(help_text="yyyy-mm-dd", null=False, blank=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    class Meta:
+        verbose_name = 'Avail Check'
+        verbose_name_plural = 'Avail Checks'
+
     def __str__(self):
-        return f'Avail Check for {self.project} from {self.start_date} - {self.end_date}'
+        avail_check_date_ranges = ", ".join(str(dr) for dr in self.avail_check_date_ranges.all())
+        return f"{self.project}: {avail_check_date_ranges or 'No date ranges'}"
 
     def send_email_notifications(self):
         # Send emails to the stand-ins with a link to accept or reject the request.
@@ -635,8 +746,8 @@ class AvailCheck(models.Model):
             message = f"""
             Hi {standin.user.first_name},
 
-            You have a new avail check for the following dates:
-            {self.start_date} to {self.end_date}
+            You have a new avail check:
+            {self.__str__}
 
             Please respond by clicking one of the links below:
             Accept: {accept_url}
@@ -656,6 +767,40 @@ class AvailCheck(models.Model):
         super().save(*args, **kwargs)
         self.send_email_notifications()
 
+
+class AvailCheckDateRange(models.Model):
+    avail_check = models.ForeignKey(AvailCheck, on_delete=models.CASCADE, related_name="avail_check_date_ranges")
+    start_date = models.DateField(validators=[
+        MinValueValidator(date(2020, 4, 1), 'No ancient start dates'),
+    ], help_text="yyyy-mm-dd", null=False, blank=False)
+    end_date = models.DateField(validators=[validate_avail_date], default=models.F('start_date'), help_text="yyyy-mm-dd", null=False, blank=True)
+
+    class Meta:
+        ordering = ['-start_date']
+        constraints = [
+            models.CheckConstraint(check=models.Q(start_date__lte=models.F('end_date')), name='valid_date_range'),
+            models.UniqueConstraint(fields=['avail_check', 'start_date', 'end_date'], name='unique_availability_dates')
+        ]
+
+    def __str__(self):
+        return f"{self.start_date} - {self.end_date}" if self.start_date != self.end_date else f"{self.start_date}"
+
+    def clean(self):
+        super().clean()  # Call parent clean method
+        # Ensure dates are not Null
+        if self.start_date is None or self.end_date is None:
+            raise ValidationError("Start date and end date cannot be empty.")
+	    # Ensure dates are valid date tyes
+        if not isinstance(self.start_date, date) or not isinstance(self.end_date, date):
+            raise ValidationError("Please enter valid dates.")
+        # Ensure start_date <= end_date
+        if self.start_date > self.end_date:
+            raise ValidationError("Start date cannot be after end date.")
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        super().save(*args, **kwargs)
+    
 
 class BookingRequest(models.Model):
     STATUS_CHOICES = [
@@ -695,6 +840,7 @@ class BookingRequest(models.Model):
             raise ValidationError("Please enter a date in the yyyy-mm-dd format.")
         if self.start_date > self.end_date:
             raise ValidationError("Start date cannot be after the end date.")
+
 
 class BookingRequestImage(models.Model):
     image = models.ImageField(upload_to='booking_requests/', validators=[validate_image])

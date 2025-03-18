@@ -1,85 +1,170 @@
-from datetime import date, timedelta
-from django.test import TestCase
-from .models import User, Avail, StandIn
 
-class AvailOverlapTests(TestCase):
+from django.test import TestCase
+from django.utils.timezone import now, timedelta
+from .models import User, StandIn, Availability, AvailabilityDateRange, Booking, BookingDateRange
+
+class AvailabilityModelTest(TestCase):
     def setUp(self):
         # Create a StandIn for testing
         self.user = User.objects.create(first_name="Testo", last_name="Testerson")
         self.standin = StandIn.objects.create(user=self.user, height_in_inches=73)
+        self.booking = Booking.objects.create(
+            project="Test Project",
+            start_date=now().date() + timedelta(days=3),
+            end_date=now().date() + timedelta(days=5),
+            standin=self.stand_in
+        )
 
-    def test_non_overlapping_entries(self):
-        Avail.objects.create(standin=self.standin, start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True)
-        avail = Avail(standin=self.standin, start_date=date(2026, 2, 1), end_date=date(2026, 2, 15), is_available=False)
-        avail.save()
+    def test_create_availability(self):
+        """ Test basic availability creation. """
+        avail = Availability.objects.create(
+            standin=self.stand_in,
+            is_available=True
+        )
+        self.assertTrue(avail.is_available)
+        self.assertEqual(avail.standin, self.stand_in)
 
-        self.assertEqual(Avail.objects.count(), 2)
+    def test_create_availability_date_range(self):
+        """ Test adding availability date ranges. """
+        avail = Availability.objects.create(standin=self.stand_in, is_available=True)
+        date_range = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=now().date(),
+            end_date=now().date() + timedelta(days=2)
+        )
+        self.assertEqual(date_range.availability, avail)
+        self.assertEqual(date_range.start_date, now().date())
+        self.assertEqual(date_range.end_date, now().date() + timedelta(days=2))
 
-    def test_fully_overlapping_same_status(self):
-        Avail.objects.create(standin=self.standin, start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True)
-        avail = Avail(standin=self.standin, start_date=date(2026, 1, 5), end_date=date(2026, 1, 10), is_available=True)
-        avail.save()
+    def test_merge_overlapping_availability(self):
+        """ Test merging overlapping available ranges. """
+        avail = Availability.objects.create(standin=self.stand_in, is_available=True)
 
-        self.assertEqual(Avail.objects.count(), 1)
-        merged_avail = Avail.objects.first()
-        self.assertEqual(merged_avail.start_date, date(2026, 1, 1))
-        self.assertEqual(merged_avail.end_date, date(2026, 1, 15))
+        range1 = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=now().date(),
+            end_date=now().date() + timedelta(days=2)
+        )
+        range2 = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=now().date() + timedelta(days=1),
+            end_date=now().date() + timedelta(days=4)
+        )
 
-    def test_fully_overlapping_different_status(self):
-        Avail.objects.create(standin=self.standin, start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True)
-        avail = Avail(standin=self.standin, start_date=date(2026, 1, 5), end_date=date(2026, 1, 10), is_available=False)
-        avail.save()
+        # Simulate merging logic (manually invoking resolve_overlaps)
+        avail.resolve_overlaps([
+            {"start_date": range1.start_date, "end_date": range2.end_date}
+        ])
 
-        self.assertEqual(Avail.objects.count(), 3)
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 1), end_date=date(2026, 1, 4), is_available=True).exists())
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 5), end_date=date(2026, 1, 10), is_available=False).exists())
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 11), end_date=date(2026, 1, 15), is_available=True).exists())
+        merged_ranges = AvailabilityDateRange.objects.filter(availability=avail)
+        self.assertEqual(merged_ranges.count(), 1)
+        self.assertEqual(merged_ranges.first().start_date, range1.start_date)
+        self.assertEqual(merged_ranges.first().end_date, range2.end_date)
 
-    def test_partially_overlapping_different_status(self):
-        Avail.objects.create(standin=self.standin, start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True)
-        avail = Avail(standin=self.standin, start_date=date(2026, 1, 10), end_date=date(2026, 1, 20), is_available=False)
-        avail.save()
+    def test_cannot_overlap_booked_ranges(self):
+        """ Test that availability cannot overlap with booked dates. """
+        avail = Availability.objects.create(standin=self.stand_in, is_available=False, booking=self.booking)
 
-        self.assertEqual(Avail.objects.count(), 2)
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 1), end_date=date(2026, 1, 9), is_available=True).exists())
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 10), end_date=date(2026, 1, 20), is_available=False).exists())
+        with self.assertRaises(Exception):
+            AvailabilityDateRange.objects.create(
+                availability=avail,
+                start_date=self.booking.start_date - timedelta(days=1),
+                end_date=self.booking.end_date + timedelta(days=1)
+            )
 
-    def test_adjacent_entries(self):
-        Avail.objects.create(standin=self.standin, start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True)
-        avail = Avail(standin=self.standin, start_date=date(2026, 1, 16), end_date=date(2026, 1, 31), is_available=True)
-        avail.save()
+    def test_adjusts_around_booked_dates(self):
+        """ Test that new availability is adjusted around booked dates. """
+        avail = Availability.objects.create(standin=self.stand_in, is_available=True)
 
-        self.assertEqual(Avail.objects.count(), 1)
-        merged_avail = Avail.objects.first()
-        self.assertEqual(merged_avail.start_date, date(2026, 1, 1))
-        self.assertEqual(merged_avail.end_date, date(2026, 1, 31))
+        range1 = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=now().date(),
+            end_date=self.booking.start_date - timedelta(days=1)
+        )
 
-    def test_split_existing_entry(self):
-        print('Creating first avail:')
-        Avail.objects.create(standin=self.standin, start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True, notes='1st entry')
-        print(f'First avail {Avail.objects.filter(standin=self.standin, start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True)}')
-        print('Creating Second avail:')
-        avail = Avail(standin=self.standin, start_date=date(2026, 1, 5), end_date=date(2026, 1, 10), is_available=False, notes='2nd entry')
-        print(f'avail = {avail}\nSaving')
-        avail.save()
-        print(f'Second avail saved')
+        range2 = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=self.booking.end_date + timedelta(days=1),
+            end_date=now().date() + timedelta(days=10)
+        )
 
-        print(f'TEST: Avail.objects.count() {Avail.objects.count()}')
+        self.assertEqual(range1.end_date, self.booking.start_date - timedelta(days=1))
+        self.assertEqual(range2.start_date, self.booking.end_date + timedelta(days=1))
 
-        avails = Avail.objects.all()
-        for avail in avails:
-            print(f'{avail} {avail.notes}')
+    def test_bulk_update_availability(self):
+        """ Test bulk update for availability date ranges. """
+        avail = Availability.objects.create(standin=self.stand_in, is_available=True)
 
-        self.assertEqual(Avail.objects.count(), 3)
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 1), end_date=date(2026, 1, 4), is_available=True).exists())
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 5), end_date=date(2026, 1, 10), is_available=False).exists())
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 11), end_date=date(2026, 1, 15), is_available=True).exists())
+        range1 = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=now().date(),
+            end_date=now().date() + timedelta(days=2)
+        )
+        range2 = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=now().date() + timedelta(days=3),
+            end_date=now().date() + timedelta(days=5)
+        )
 
-    def test_no_overlap_different_status(self):
-        Avail.objects.create(standin=self.standin, start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True)
-        avail = Avail(standin=self.standin, start_date=date(2026, 1, 16), end_date=date(2026, 1, 31), is_available=False)
-        avail.save()
+        # Bulk update: Extend both ranges by 1 day
+        range1.end_date += timedelta(days=1)
+        range2.start_date -= timedelta(days=1)
+        AvailabilityDateRange.objects.bulk_update([range1, range2], ['start_date', 'end_date'])
 
-        self.assertEqual(Avail.objects.count(), 2)
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 1), end_date=date(2026, 1, 15), is_available=True).exists())
-        self.assertTrue(Avail.objects.filter(start_date=date(2026, 1, 16), end_date=date(2026, 1, 31), is_available=False).exists())
+        updated_range1 = AvailabilityDateRange.objects.get(id=range1.id)
+        updated_range2 = AvailabilityDateRange.objects.get(id=range2.id)
+
+        self.assertEqual(updated_range1.end_date, now().date() + timedelta(days=3))
+        self.assertEqual(updated_range2.start_date, now().date() + timedelta(days=2))
+
+    def test_bulk_delete_availability(self):
+        """ Test bulk deletion of availability date ranges. """
+        avail = Availability.objects.create(standin=self.stand_in, is_available=True)
+
+        range1 = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=now().date(),
+            end_date=now().date() + timedelta(days=2)
+        )
+        range2 = AvailabilityDateRange.objects.create(
+            availability=avail,
+            start_date=now().date() + timedelta(days=3),
+            end_date=now().date() + timedelta(days=5)
+        )
+
+        # Bulk delete all date ranges
+        AvailabilityDateRange.objects.filter(availability=avail).delete()
+
+        self.assertEqual(AvailabilityDateRange.objects.count(), 0)
+
+    def test_standins_cannot_have_adjacent_bookings(self):
+        """ Test that stand-ins cannot have adjacent bookings without a gap. """
+        booking1 = Booking.objects.create(
+            project="Project 1",
+            start_date=now().date(),
+            end_date=now().date() + timedelta(days=3),
+            standin=self.stand_in
+        )
+        with self.assertRaises(Exception):
+            Booking.objects.create(
+                project="Project 2",
+                start_date=booking1.end_date,
+                end_date=booking1.end_date + timedelta(days=2),
+                standin=self.stand_in
+            )
+
+    def test_expired_availability_is_deleted(self):
+        """ Test automatic deletion of availability older than 3 years. """
+        old_avail = Availability.objects.create(standin=self.stand_in, is_available=True)
+        old_range = AvailabilityDateRange.objects.create(
+            availability=old_avail,
+            start_date=now().date() - timedelta(days=1100),  # More than 3 years ago
+            end_date=now().date() - timedelta(days=1000)
+        )
+
+        # Simulate scheduled cleanup job
+        AvailabilityDateRange.objects.filter(
+            end_date__lt=now().date() - timedelta(days=3 * 365)
+        ).delete()
+
+        self.assertFalse(AvailabilityDateRange.objects.filter(id=old_range.id).exists())

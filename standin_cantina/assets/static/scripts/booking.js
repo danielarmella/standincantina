@@ -1,5 +1,7 @@
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOMContentLoaded');
+    const templateType = document.body.getAttribute("data-template");
+    const user_id = document.body.getAttribute("data-user");
 
     // Add event listener for nav links
     load_nav();
@@ -8,7 +10,18 @@ document.addEventListener('DOMContentLoaded', function() {
     clear_messages();
 
     //switch View to home by default
-    view_switcher('home');
+    switch (templateType) {
+        case 'home':
+            view_switcher('home');
+            break;
+        case 'index':
+            view_switcher('index');
+            break;
+        case 'standin':
+            load_availchecks(user_id);
+            view_switcher('standin');
+            break;
+    }
 });
 
 
@@ -68,7 +81,7 @@ function load_nav() {
 function view_switcher(view) {
     console.log(`In view_switcher. view = ${view}`);
     // Validate view parameter
-    if (!['home', 'user_account', 'Stand-in_profile', 'register_user', 'register_standin', 'registration_pending', 'login', 'logout'].includes(view)) {
+    if (!['home', 'user_account', 'Stand-in_profile', 'register_user', 'register_standin', 'registration_pending', 'login', 'logout', 'bookings', 'availchecks', 'availabilities'].includes(view)) {
         console.log(`index_view_switcher could not figure out which view is ${view}`);
         return;
     }
@@ -84,6 +97,11 @@ function view_switcher(view) {
     // Show appropriate views
     if (document.querySelector(`#${view}-view`)) {
         document.querySelector(`#${view}-view`).style.display = 'block';
+    }
+
+    if (view === 'availchecks') {
+        document.querySelector(`#bookings-view`).style.display = 'block';
+        document.querySelector(`#availabilities-view`).style.display = 'block';
     }
 }
 
@@ -525,6 +543,49 @@ async function update_standin_profile() {
             // Handle any errors that occurred during the fetch or processing
             console.error('Error updating profile:', error);
         });
+}
+
+
+async function load_availchecks(user_id) {
+    await fetch(`load_availchecks/${user_id}`, {
+        method: 'GET',
+        headers: {
+            'content-type': 'application/json',
+        }
+    })
+    .then(response => response.json())
+    .then(data => {
+        console.log(data);
+
+        // Create container for all AvailChecks
+        const avail_checks_div = document.createElement('div');
+        avail_checks_div.setAttribute('class', 'avail_checks_div container');
+        
+        // Create ul to list all AvailChecks
+        const avail_checks_ul = document.createElement('ul');
+        avail_checks_ul.setAttribute('class', 'avail_checks_ul');
+        avail_checks_ul.setAttribute('id', 'avail_checks_ul');
+        avail_checks_div.appendChild(avail_checks_ul);
+
+        // Iterate over queryset
+        data.forEach(avail_check => {
+
+            // Create li for each AvailCheck
+            const avail_check_li = document.createElement('li');
+            avail_check_li.setAttribute('class', 'avail_check_li');
+            avail_check_li.setAttribute('id', `avail_check_li_${avail_check.pk}`);
+            avail_checks_ul.appendChild(avail_check_li);
+
+
+            const accept_btn = document.createElement('button');
+            accept_btn.classList = 'btn';
+            accept_btn.
+        })
+
+        
+
+
+    })
 }
 
 

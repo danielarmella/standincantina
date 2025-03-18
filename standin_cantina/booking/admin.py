@@ -517,7 +517,7 @@ class StandInAdmin(BaseAdmin):
         prefill_link = f"{add_link}?standin={obj.id}"  # Pass StandIn ID as a query parameter
 
         availability_html = " \n".join([
-            format_html('<a class="avail_link" style="color: {}" href="{}">{}</a>', 'green' if availability.is_available else 'red',reverse('admin:booking_availability_change', args=[availability.id]), str(availability))
+            format_html('<a class="avail_link" style="color: {}" href="{}">{}</a>', 'green' if availability.status == 'available' else 'red',reverse('admin:booking_availability_change', args=[availability.id]), str(availability))
             for availability in availabilities
         ]) if availabilities else 'Unknown availability.'
 
@@ -632,9 +632,9 @@ class ActorStandInMatchAdmin(BaseAdmin):
 
 @admin.register(Availability)
 class AvailabilityAdmin(BaseAdmin):
-    list_display = ('standin', 'start_date', 'end_date', 'is_available', 'booked',)
+    list_display = ('standin', 'start_date', 'end_date', 'status', 'booked',)
     search_fields = ('standin__user__first_name', 'standin__user__last_name', 'start_date', 'end_date',)
-    list_filter = ('standin', 'start_date', 'end_date', 'is_available', 'notes',)
+    list_filter = ('standin', 'start_date', 'end_date', 'status', 'notes',)
 
     autocomplete_fields = ('standin', 'booked',)
 

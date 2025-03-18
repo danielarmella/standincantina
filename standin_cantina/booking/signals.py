@@ -24,77 +24,10 @@ def send_booking_reminder(sender, instance, created, **kwargs):
         instance.save()
 
 
-# # Booking will make stand-in unavailable
-# @receiver(post_save, sender=Booking)
-# def make_standin_unavail(sender, instance, created, **kwargs):
-#     avail = Availability.objects.get(standin=instance.standin, booked=instance)
-#     if avail: # Adjust associated avail
-#         # Fill any gaps with avail True
-#         if instance.start_date > avail.end_date or instance.end_date < avail.start_date:
-#             new_avail = Availability(
-#                 standin=instance.standin,
-#                 start_date=avail.start_date,
-#                 end_date=avail.end_date,
-#                 is_available=True,
-#                 notes="")
-#         elif instance.start_date >= avail.start_date and instance.end_date < avail.start_date:
-#             new_avail = Availability(
-#                 standin=instance.standin,
-#                 start_date=instance.end_date + timedelta(days=1),
-#                 end_date=avail.end_date,
-#                 is_available=True,
-#                 notes="")
-#         elif instance.start_date <= avail.start_date and instance.end_date >= avail.end_date:
-#             # No gaps need to be filled
-#             pass
-#         elif instance.start_date > avail.start_date and instance.end_date < avail.end_date:
-#             new_avail = Availability(
-#                 standin=instance.standin,
-#                 start_date=avail.start_date,
-#                 end_date=instance.start_date - timedelta(days=1),
-#                 is_available=True,
-#                 notes="")
-#             new_after_avail = Availability(
-#                 standin=instance.standin,
-#                 start_date=instance.end_date + timedelta(days=1),
-#                 end_date=avail.end_date,
-#                 is_available=True,
-#                 notes="")
-#         elif instance.start_date >= avail.start_date and instance.end_date >= avail.end_date:
-#             new_avail = Availability(
-#                 standin=instance.standin,
-#                 start_date=avail.start_date,
-#                 end_date=instance.end_date - timedelta(days=1),
-#                 is_available=True,
-#                 notes="")
-#         avail.start_date = instance.start_date
-#         avail.end_date = instance.end_date
-#         avail.is_available = False
-#         try:
-#             new_avail.save()
-#         except NameError:
-#             pass
-#         try:
-#             new_after_avail.save()
-#         except NameError:
-#             pass
-#     else:
-#         avail = Availability.objects.create(
-#             standin=instance.standin,
-#             start_date=instance.start_date,
-#             end_date=instance.end_date,
-#             is_available=False,
-#             notes=f"Booked on {instance.project}",
-#             booked=instance
-#             )
-#     print(avail)
-#     avail.save()
-
-
 # Deleting a Booking will make stand-in available
 @receiver(post_delete, sender=Booking)
 def make_standin_available(sender, instance, **kwargs):
-    availability = Availability.objects.create(standin=instance.standin, start_date=instance.start_date, end_date=instance.end_date, is_available=True, booked=None, notes=f"Booking for {instance.project} canceled. Stand-in released and is showing available.")
+    availability = Availability.objects.create(standin=instance.standin, start_date=instance.start_date, end_date=instance.end_date, status='available', booked=None, notes=f"Booking for {instance.project} canceled. Stand-in released and is showing available.")
     print(availability)
 
 

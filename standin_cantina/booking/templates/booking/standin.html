@@ -1,19 +1,23 @@
 {% extends "booking/layout.html" %}
+{% block template_name %}standin{% endblock %}
+{% block user %}{{ user.id }}{% endblock %}
 {% load static %}
 
-<!-- {
+<div></div>
+
+<!-- CONTEXT:
+    {
     'title': f'{user.first_name} {user.last_name}',
     'user': user,
     'availabilities': availabilities,
     'avail_checks': avail_checks,
     'bookings': bookings,
     'message': message
-} -->
+    } -->
 
 {% block title %}
     {{ title }}
 {% endblock %}
-
 
 
 <h1 id='pHeading'>Welcome to the Stand-in Cantina</h1>
@@ -26,7 +30,12 @@
         </div>
     {% endif %}
 
-    <div>
+    <div class='view' id="availchecks-view">
+        <h1>Avail Checks</h1>
+    </div>
+
+
+    <div class='view' id="bookings-view">
         <h1>Bookings</h1>
         <ul>
         {% for booking in bookings %}
@@ -35,16 +44,7 @@
         </ul>
     </div>
 
-    <div>
-        <h1>Avail Checks</h1>
-        <ul>
-        {% for avail_check in avail_checks %}
-            <li>{{ avail_check }}</li>
-        {% endfor %}
-        </ul>
-    </div>
-
-    <div>
+    <div class='view' id="availabilities-view">
         <h1>Availability</h1>
         <ul>
         {% for availability in availabilities %}
@@ -52,5 +52,6 @@
         {% endfor %}
         </ul>
     </div>
+
     <p>First Name: {{ user.first_name }}</p>
 {% endblock %}

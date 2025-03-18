@@ -2,6 +2,7 @@
 from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
+from django.core import serializers
 from django.core.mail import send_mail
 from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
@@ -30,6 +31,7 @@ from .models import (
     Availability,
     Booking,
     AvailCheck,
+    AvailCheckDateRange,
     BookingRequest,
     BookingRequestImage
 )
@@ -243,12 +245,12 @@ def accept_availability(request, availcheck_id, standin_id):
     standin = get_object_or_404(StandIn, id=standin_id)
     avail_check = get_object_or_404(AvailCheck, id=availcheck_id)
 
-    # Create an Availability entry with is_available=True
+    # Create an Availability entry with status='available'
     Availability.objects.create(
         standin=standin,
         start_date=avail_check.start_date,
         end_date=avail_check.end_date,
-        is_available=True,
+        status='available',
         notes=f'Accepted AvailCheck for {avail_check.project}. ID# {availcheck_id}'
     )
 
@@ -305,6 +307,15 @@ class BookingRequestListView(ListView):
     #     return BookingRequest.objects.filter(ad=self.request.user)
 
 
+def load_availchecks(request, user_id):
+    user = request.user
+    standin = StandIn.objects.filter(user=user)[0]
+    avail_checks = AvailCheck.objects.filter(standins=standin)
+    data = serializers.serialize('json', avail_checks)
+    print(f'{data = }')
+    return JsonResponse(data=data, safe=False)
+
+
 def strip(request):
     users = User.objects.all()
     for user in users:
@@ -347,9 +358,15 @@ def fix_booking_dates(request):
     print(f'{bookings = }')
 
     for booking in bookings:
+        booking.refresh_from_db()  # Force Django to reload data from the database
+        print(f'{booking.id = }, {booking.start_date = }, {booking.end_date = }')
         print(f'{booking = }')
         print(f'{booking.id = }')
         print(f'{type(booking.start_date) = }')
+        
+        if booking.start_date is None:
+            print(f"⚠️ WARNING: Booking {booking.id} has NULL start_date despite DB showing a value.")
+
         match booking.id:
             case 3:
                 booking.start_date = datetime.date(2024, 10, 6)

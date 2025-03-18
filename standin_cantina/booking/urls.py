@@ -13,7 +13,7 @@ urlpatterns = [
     
     # path("strip", views.strip, name="strip"),
     # path("teststrip", views.teststrip, name="teststrip"),
-    path("fix_booking_dates", views.fix_booking_dates, name="fix_booking_dates"),
+    # path("fix_booking_dates", views.fix_booking_dates, name="fix_booking_dates"),
 
     path("login", views.login_view, name="login"),
     path("logout", views.logout_view, name="logout"),
@@ -28,6 +28,7 @@ urlpatterns = [
     # path("register", views.UserRegistrationView.as_view(), name="register"),
     # path("register/standin/", views.StandInRegistrationView.as_view(), name="standin_registration"),
     path("registration_pending/", views.registration_pending, name="registration_pending"),
+    path("load_availchecks/<int:user_id>", views.load_availchecks, name="load_availchecks"),
     path("availability/accept/<int:request_id>/<int:standin_id>/", views.accept_availability, name="accept_availability"),
     path("availability/reject/", views.reject_availability, name="reject_availability"),
     # path("admin/send_avail_checks/", send_avail_checks, name="send_avail_checks"),
