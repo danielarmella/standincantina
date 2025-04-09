@@ -1,9 +1,12 @@
+
 from django.contrib import messages
 from django.contrib.auth.models import AbstractUser
 from django.core.exceptions import ValidationError
+from django.core.mail import EmailMultiAlternatives
 from django.core.validators import MinValueValidator, MaxValueValidator, validate_email
 from django.db import models, transaction
-from django.utils.timezone import now
+from django.urls import reverse
+from django.utils.timezone import now, localdate
 
 from datetime import date, timedelta
 import imghdr
@@ -27,9 +30,9 @@ SKIN_TONE_CHOICES = [
 HAIR_COLOR_CHOICES = [
     ('black', 'Black'),
     ('brown', 'Brown'),
+    ('red', 'Red'),
     ('blond', 'Blond'),
-    ('white/gray', 'White/Gray'),
-    ('red', 'Red')
+    ('white/gray', 'White/Gray')
 ]
 HAIR_LENGTH_CHOICES = [
     ('bald', 'Bald'),
@@ -115,23 +118,20 @@ class User(AbstractUser):
 
 class Project(models.Model):
     name = models.CharField(max_length=255, blank=False, default='')
-    start_date = models.DateField('Project start date', blank=True, null=True)
-    end_date = models.DateField('Project end date', blank=True, null=True)
     ads = models.ManyToManyField('AD', verbose_name='Assistant Directors', related_name='projects', blank=True)
-
-    def __str__(self):
-        return self.name
-
-    def clean(self):
-        super().clean()
-        if self.start_date and self.end_date and self.start_date > self.end_date:
-            raise ValidationError('Start date cannot be after the end date.')
+    start_date = models.DateField('Project start date', validators=[
+        MinValueValidator(date(2020, 4, 1), 'No ancient start dates'),
+    ], help_text="yyyy-mm-dd", null=True, blank=True)
+    end_date = models.DateField('Project end date', help_text="yyyy-mm-dd", null=True, blank=True)
 
     class Meta:
-        ordering = ['-start_date']
+        ordering = ['name']
         verbose_name = 'Project'
         verbose_name_plural = 'Projects'
 
+    def __str__(self):
+        return self.name
+    
 
 class AD(models.Model):
     first_name = models.CharField(max_length=127, blank=True, default='')
@@ -298,9 +298,6 @@ class HairColor(models.Model):
     standin = models.ForeignKey(StandIn, on_delete=models.CASCADE, related_name="hair_colors")
     hair_color = models.CharField('Hair color', max_length=15, choices=HAIR_COLOR_CHOICES, blank=False, default="")
 
-    def __str__(self):
-        return f'{self.hair_color.capitalize()}'
-
     class Meta:
         verbose_name = 'Hair color'
         verbose_name_plural = 'Hair colors'
@@ -310,6 +307,13 @@ class HairColor(models.Model):
                 name='unique_hair_color',
                 violation_error_message="This stand-in already has that hair color listed.")
         ]
+
+    def __str__(self):
+        return f'{self.hair_color.capitalize()}'
+
+    def save(self, *args, **kwargs):
+        self.hair_color = self.hair_color.strip()  # Remove extra spaces before saving
+        super().save(*args, **kwargs)
 
 
 class Incident(models.Model):
@@ -428,7 +432,7 @@ class ActorStandInMatch(models.Model):
 
 
 def validate_avail_date(day):
-    if day < now().date():
+    if day < localdate():
         raise ValidationError("This date cannot be in the past.")
 
 
@@ -478,16 +482,19 @@ def adjust_new_range(new_range, overlap):
 
 
 class AvailabilityStatus(models.TextChoices):
+    AVAILCHECK = "avail_check", "Avail Check"
     AVAILABLE = "available", "Available"
     UNAVAILABLE = "unavailable", "Unavailable"
     BOOKED = "booked", "Booked"
     
 
 class Availability(models.Model):
-    standin = models.ForeignKey(StandIn, on_delete=models.CASCADE, related_name="avails")
+    standin = models.ForeignKey(StandIn, on_delete=models.CASCADE, null=True, blank=True, related_name="avails")
     status = models.CharField(max_length=15, choices=AvailabilityStatus.choices, default=AvailabilityStatus.UNAVAILABLE)
-    booking = models.ForeignKey('Booking', on_delete=models.SET_NULL, null=True, blank=True, related_name="avail", help_text='Must be a booking not a project.')
+    avail_check = models.ForeignKey('AvailCheck', null=True, blank=True, on_delete=models.CASCADE, related_name='availabilities')
+    booking = models.OneToOneField('Booking', null=True, blank=True, on_delete=models.CASCADE, related_name='availability')
     notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(editable=False, null=False)
 
     class Meta:
         db_table = 'booking_availability'
@@ -495,8 +502,8 @@ class Availability(models.Model):
         verbose_name_plural = 'Availabilities'
 
     def __str__(self):
-        availabilities = ", ".join(str(dr) for dr in self.availability_date_ranges.all())
-        return f"{self.status} | {availabilities or 'No date ranges'}"
+        availabilities = ", ".join(str(dr) for dr in self.date_ranges.all())
+        return f"{self.standin} is {self.status.capitalize()} | {availabilities or 'No date ranges'}"
 
     def resolve_overlaps(self, new_ranges):
         # Handles merging, replacing, and adjusting date ranges based on existing Availability.
@@ -574,20 +581,24 @@ class Availability(models.Model):
     def save(self, *args, **kwargs):
         # Custom save logic to resolve availability overlaps before saving.
         self.full_clean()
-        new_ranges = [{'start_date': dr.start_date, 'end_date': dr.end_date} for dr in self.availability_date_ranges.all()]
+        new_ranges = [{'start_date': dr.start_date, 'end_date': dr.end_date} for dr in self.date_ranges.all()]
         
         if self.resolve_overlaps(new_ranges) is False:
             raise ValidationError("Overlapping availability cannot be saved.")
+        
+        if not self.id:
+            self.created_at = now()
+        self.updated_at = now()
         
         super().save(*args, **kwargs)
 
 
 class AvailabilityDateRange(models.Model):
-    availability = models.ForeignKey(Availability, on_delete=models.CASCADE, related_name="availability_date_ranges")
-    start_date = models.DateField(validators=[
+    availability = models.ForeignKey(Availability, on_delete=models.CASCADE, related_name="date_ranges")
+    start_date = models.DateField('Start date', validators=[
         MinValueValidator(date(2020, 4, 1), 'No ancient start dates'),
     ], help_text="yyyy-mm-dd", null=False, blank=False)
-    end_date = models.DateField(validators=[validate_avail_date], default=models.F('start_date'), help_text="yyyy-mm-dd", null=False, blank=True)
+    end_date = models.DateField('End Date', validators=[validate_avail_date], help_text="yyyy-mm-dd", null=False, blank=False)
 
     class Meta:
         ordering = ['-start_date']
@@ -610,15 +621,82 @@ class AvailabilityDateRange(models.Model):
         # Ensure start_date <= end_date
         if self.start_date > self.end_date:
             raise ValidationError("Start date cannot be after end date.")
+        # Ensure no rage greater than 1 year
+        if (self.end_date - self.start_date).days > 365:
+            raise ValidationError("Date range cannot exceed 1 year.")
 
     def save(self, *args, **kwargs):
         self.full_clean()
         super().save(*args, **kwargs)
 
 
+class AvailCheck(models.Model):
+    standins = models.ManyToManyField(StandIn, blank=True, related_name='avail_checks')
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="avail_checks", null=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(editable=False, null=False)
+    updated_at = models.DateTimeField(null=False)
+
+    class Meta:
+        db_table = 'booking_availcheck'
+        verbose_name = 'Avail Check'
+        verbose_name_plural = 'Avail Checks'
+
+    def __str__(self):
+        avail_check_date_ranges = ", ".join(str(dr) for dr in self.availabilities.first().date_ranges.all())
+        return f"{self.project}: {avail_check_date_ranges or 'No date ranges'}"
+
+    def send_email_notifications(self):
+        # Send emails to the stand-ins with a link to accept or reject the request.
+        for standin in self.standins.all():
+            accept_url = f"http://127.0.0.1:8000{reverse('booking:accept_availability', args=[self.id, standin.id])}"
+            reject_url = f"http://127.0.0.1:8000{reverse('booking:reject_availability')}"
+            
+            subject = "Stand-in Cantina: Availability Check"
+            from_email = EMAIL_HOST_USER
+            recipient = [standin.user.email]
+
+            # Plain text version
+            text_content = f"""
+            Hi {standin.user.first_name.capitalize()},
+
+            You have a new availability check for: {str(self)}
+
+            Please respond using the links below:
+            Accept: {accept_url}
+            Reject: {reject_url}
+            """
+
+            # HTML version
+            html_content = f"""
+            <p>Hi {standin.user.first_name.capitalize()},</p>
+            <p>You have a new availability check for: <strong>{str(self)}</strong></p>
+            <p>Please respond using the links below:</p>
+            <ul>
+                <li><a href="{accept_url}">Accept</a></li>
+                <li><a href="{reject_url}">Reject</a></li>
+            </ul>
+            """
+
+            # Create email message
+            email_message = EmailMultiAlternatives(subject, text_content, from_email, recipient)
+            email_message.attach_alternative(html_content, "text/html")  # Attach HTML content
+            email_message.send()
+
+    def save(self, *args, **kwargs):
+        self.full_clean()
+        
+        if not self.id:
+            self.created_at = now()
+        self.updated_at = now()
+
+        super().save(*args, **kwargs)
+        self.send_email_notifications()
+
+
 class Booking(models.Model):
-    standin = models.ForeignKey(StandIn, on_delete=models.CASCADE, related_name="standin_bookings")
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="project_bookings")
+    standin = models.ForeignKey(StandIn, on_delete=models.CASCADE, related_name="bookings")
+    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="bookings")
     email_reminder_sent = models.BooleanField('Email reminder sent', default=False)
 
     class Meta:
@@ -626,55 +704,60 @@ class Booking(models.Model):
         verbose_name_plural = 'Bookings'
 
     def __str__(self):
-        booking_date_ranges = ", ".join(str(dr) for dr in self.booking_date_ranges.all())
+        booking_date_ranges = ", ".join(str(dr) for dr in self.availability.date_ranges.all())
         return f"{self.project}: {booking_date_ranges or 'No date ranges'}"
 
     def clean(self):
-        # Ensure no booking conflicts with other projects
-        project_conflicts = Booking.objects.filter(standin=self.standin).exclude(project=self.project)
-        for booking in project_conflicts:
-            for existing_range in booking.booking_date_ranges.all():
-                for new_range in self.booking_date_ranges.all():
+        if not self.standin:
+            return  # skip validation if no stand-in set
+
+        # Get date ranges for this booking
+        new_ranges = self.availability.date_ranges.all()
+
+        # Get all other bookings for this stand-in (exclude self)
+        other_bookings = Booking.objects.filter(standin=self.standin).exclude(id=self.id)
+
+        for other_booking in other_bookings:
+            if not hasattr(other_booking, 'availability') or not other_booking.availability:
+                continue
+
+            for existing_range in other_booking.availability.date_ranges.all():
+                for new_range in new_ranges:
+                    # Overlap check
                     if not (new_range.end_date < existing_range.start_date or new_range.start_date > existing_range.end_date):
-                        raise ValidationError(f"{self.standin} is already booked on {booking.project} on overlaping days.")
-                    
-        # Ensure no overlapping Bookings on this or any project
-        for new_range in self.booking_date_ranges.all():
-            if BookingDateRange.objects.filter(
-                booking__standin=self.standin,
-                start_date__lte=new_range.end_date,
-                end_date__gte=new_range.start_date
-            ).exclude(booking=self).exists():
-                raise ValidationError(f"{self.standin.user.first_name} is already booked on overlapping day(s).")
+                        if self.project == other_booking.project:
+                            raise ValidationError(f"{self.standin} already has a booking for this project on overlapping days. Please update the existing booking.")
+                        else:
+                            raise ValidationError(f"{self.standin} is already booked on {other_booking.project} during overlapping dates.")
 
     def save(self, *args, **kwargs):
-        """Ensure the corresponding Availability is created or updated when a Booking is saved."""
+    # Ensure the associated Availability is updated when a Booking is saved.
         with transaction.atomic():
             self.clean()
+            if self.standin != self.availability.standin:
+                raise ValidationError("Booking.standin must match Availability.standin")
+
             super().save(*args, **kwargs)
-            
-            # Ensure the stand-in's availability reflects the booking
-            availability = Availability.objects.filter(booking=self).first()
-            if not availability:
-                availability = Availability.objects.create(
-                    standin=self.standin,
-                    project=self.project,
-                    status='booked',
-                    booking=self
-                )
-            
-            # Update availability's date ranges to match booking
-            availability.availability_date_ranges.all().delete()
-            for date_range in self.booking_date_ranges.all():
-                AvailabilityDateRange.objects.create(
-                    availability=availability,
-                    start_date=date_range.start_date,
-                    end_date=date_range.end_date
-                )
-            
+
+            availability = self.availability  # from OneToOneField
+
+            # Ensure availability has correct attributes
             availability.status = 'booked'
             availability.booking = self
+            availability.standin = self.standin  # in case it was created without this
             availability.save()
+
+            # Replace any existing date ranges with current ones
+            availability.availability_date_ranges.all().delete()
+
+            # Assuming the dates for the Booking come from somewhere external (e.g. a form)
+            # and are already applied to the availability prior to this Booking save.
+            # If not, you may want to update the date range here manually.
+
+            # If you want to enforce minimum one date range, you could add:
+            if not availability.availability_date_ranges.exists():
+                raise ValidationError("Availability must include at least one date range.")
+
 
     def delete(self, *args, **kwargs):
         # Mark availability as available before deleting the booking.
@@ -685,121 +768,6 @@ class Booking(models.Model):
                 self.availability.booking = None
                 self.availability.save()
             super().delete(*args, **kwargs)
-
-
-class BookingDateRange(models.Model):
-    booking = models.ForeignKey(Booking, on_delete=models.CASCADE, related_name="booking_date_ranges")
-    start_date = models.DateField(validators=[
-        MinValueValidator(date(2020, 4, 1), 'No ancient start dates'),
-    ], help_text="yyyy-mm-dd", null=False, blank=False)
-    end_date = models.DateField(validators=[validate_avail_date], default=models.F('start_date'), help_text="yyyy-mm-dd", null=False, blank=True)
-
-    class Meta:
-        ordering = ['-start_date']
-        constraints = [
-            models.CheckConstraint(check=models.Q(start_date__lte=models.F('end_date')), name='valid_date_range'),
-            models.UniqueConstraint(fields=['booking', 'start_date', 'end_date'], name='unique_availability_dates')
-        ]
-
-    def __str__(self):
-        return f"{self.start_date} - {self.end_date}" if self.start_date != self.end_date else f"{self.start_date}"
-
-    def clean(self):
-        super().clean()  # Call parent clean method
-        # Ensure dates are not Null
-        if self.start_date is None or self.end_date is None:
-            raise ValidationError("Start date and end date cannot be empty.")
-	    # Ensure dates are valid date tyes
-        if not isinstance(self.start_date, date) or not isinstance(self.end_date, date):
-            raise ValidationError("Please enter valid dates.")
-        # Ensure start_date <= end_date
-        if self.start_date > self.end_date:
-            raise ValidationError("Start date cannot be after end date.")
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-
-
-class AvailCheck(models.Model):
-    standins = models.ManyToManyField(StandIn, blank=True, related_name='avail_checks')
-    project = models.ForeignKey(Project, on_delete=models.CASCADE, related_name="avails_requested", null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        verbose_name = 'Avail Check'
-        verbose_name_plural = 'Avail Checks'
-
-    def __str__(self):
-        avail_check_date_ranges = ", ".join(str(dr) for dr in self.avail_check_date_ranges.all())
-        return f"{self.project}: {avail_check_date_ranges or 'No date ranges'}"
-
-    def send_email_notifications(self):
-        # Send emails to the stand-ins with a link to accept or reject the request.
-        from django.core.mail import send_mail
-        from django.urls import reverse
-
-        for standin in self.standins.all():
-            accept_url = f"<a href='127.0.0.1:8000{reverse("booking:accept_availability", args=[self.id, standin.id])}'>Accept</a>"
-            reject_url = f"<a href='127.0.0.1:8000{reverse('booking:reject_availability')}'>Reject</a>"
-
-            message = f"""
-            Hi {standin.user.first_name},
-
-            You have a new avail check:
-            {self.__str__}
-
-            Please respond by clicking one of the links below:
-            Accept: {accept_url}
-            Reject: {reject_url}
-            """
-
-            send_mail(
-                subject='Stand-in Cantina: Availability Check',
-                message=message,
-                from_email=EMAIL_HOST_USER,
-                recipient_list=[standin.user.email],
-                fail_silently=False,
-            )
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
-        self.send_email_notifications()
-
-
-class AvailCheckDateRange(models.Model):
-    avail_check = models.ForeignKey(AvailCheck, on_delete=models.CASCADE, related_name="avail_check_date_ranges")
-    start_date = models.DateField(validators=[
-        MinValueValidator(date(2020, 4, 1), 'No ancient start dates'),
-    ], help_text="yyyy-mm-dd", null=False, blank=False)
-    end_date = models.DateField(validators=[validate_avail_date], default=models.F('start_date'), help_text="yyyy-mm-dd", null=False, blank=True)
-
-    class Meta:
-        ordering = ['-start_date']
-        constraints = [
-            models.CheckConstraint(check=models.Q(start_date__lte=models.F('end_date')), name='valid_date_range'),
-            models.UniqueConstraint(fields=['avail_check', 'start_date', 'end_date'], name='unique_availability_dates')
-        ]
-
-    def __str__(self):
-        return f"{self.start_date} - {self.end_date}" if self.start_date != self.end_date else f"{self.start_date}"
-
-    def clean(self):
-        super().clean()  # Call parent clean method
-        # Ensure dates are not Null
-        if self.start_date is None or self.end_date is None:
-            raise ValidationError("Start date and end date cannot be empty.")
-	    # Ensure dates are valid date tyes
-        if not isinstance(self.start_date, date) or not isinstance(self.end_date, date):
-            raise ValidationError("Please enter valid dates.")
-        # Ensure start_date <= end_date
-        if self.start_date > self.end_date:
-            raise ValidationError("Start date cannot be after end date.")
-
-    def save(self, *args, **kwargs):
-        self.full_clean()
-        super().save(*args, **kwargs)
     
 
 class BookingRequest(models.Model):

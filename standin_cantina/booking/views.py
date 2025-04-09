@@ -4,6 +4,7 @@ from django.contrib.auth.decorators import login_required
 from django.contrib.auth.mixins import LoginRequiredMixin, UserPassesTestMixin
 from django.core import serializers
 from django.core.mail import send_mail
+from django.db import transaction
 from django.db.models import Q
 from django.http import HttpResponse, JsonResponse
 from django.shortcuts import HttpResponse, HttpResponseRedirect, get_object_or_404, redirect, render
@@ -15,7 +16,7 @@ from logger import logger
 from registrar import registrar, registrar2
 from standin_cantina.settings import EMAIL_HOST_USER
 
-from .forms import UserRegistrationForm, StandInForm, BookingRequestForm
+from .forms import UserRegistrationForm, StandInForm, AvailabilityForm, AvailabilityDateRangeFormSet, BookingRequestForm
 from .models import (
     User,
     AD,
@@ -29,12 +30,34 @@ from .models import (
     DNR,
     ActorStandInMatch,
     Availability,
-    Booking,
+    AvailabilityDateRange,
     AvailCheck,
-    AvailCheckDateRange,
+    Booking,
     BookingRequest,
     BookingRequestImage
 )
+
+
+def create_availability(request):
+    if request.method == 'POST':
+        form = AvailabilityForm(request.POST)
+        formset = AvailabilityDateRangeFormSet(request.POST)
+
+        if form.is_valid() and formset.is_valid():
+            with transaction.atomic():
+                availability = form.save()
+                formset.instance = availability
+                formset.save()
+            return redirect('some_success_page') # TODO
+
+    else:
+        form = AvailabilityForm()
+        formset = AvailabilityDateRangeFormSet()
+
+    return render(request, 'availability/create.html', {
+        'form': form,
+        'formset': formset
+    })
 
 
 def index(request, **kwargs):
@@ -75,9 +98,7 @@ def index(request, **kwargs):
         today = datetime.date.today()
         three_months_later = today + datetime.timedelta(days=90)
 
-        availabilities = Availability.objects.filter(standin=standin).filter(
-            Q(start_date__gte=today, start_date__lte=three_months_later) |
-            Q(end_date__gte=today, end_date__lte=three_months_later))
+        availabilities = Availability.objects.filter(standin=standin).filter()
 
         # Get AvailChecks
         avail_checks = AvailCheck.objects.filter(standins=standin)
@@ -87,8 +108,6 @@ def index(request, **kwargs):
         for booking in bookings:
             print(f'{booking.standin = }')
             print(f'{booking.project = }')
-            print(f'{booking.start_date = }')
-            print(f'{booking.end_date = }')
 
         return render(request, "booking/standin.html", {
             'title': f'{user.first_name.capitalize()} {user.last_name.capitalize()}',
@@ -180,15 +199,15 @@ def standin_profile_view(request):
     })
 
 
-@login_required
-def logout(request):
-    user = request.user
-    message = ""
-    return render(request, "booking/index.html", {
-        'title': 'Home',
-        'user': user,
-        'message': message
-    })
+# @login_required
+# def logout(request):
+#     user = request.user
+#     message = ""
+#     return render(request, "booking/index.html", {
+#         'title': 'Home',
+#         'user': user,
+#         'message': message
+#     })
 
 
 # class UserRegistrationView(FormView):
@@ -245,20 +264,33 @@ def accept_availability(request, availcheck_id, standin_id):
     standin = get_object_or_404(StandIn, id=standin_id)
     avail_check = get_object_or_404(AvailCheck, id=availcheck_id)
 
-    # Create an Availability entry with status='available'
-    Availability.objects.create(
-        standin=standin,
-        start_date=avail_check.start_date,
-        end_date=avail_check.end_date,
-        status='available',
-        notes=f'Accepted AvailCheck for {avail_check.project}. ID# {availcheck_id}'
-    )
+    # Use a database transaction to ensure atomicity
+    with transaction.atomic():
+        # Create and explicitly save the Availability instance first
+        availability = Availability.objects.create(
+            standin=standin,
+            status='available',
+            notes=f'Accepted AvailCheck for {avail_check.project}. ID# {availcheck_id}'
+        )
+        
+        # Now fetch AvailabilityCheckDateRanges and create corresponding AvailabilityDateRange entries
+        avail_check_dates = AvailabilityDateRange.objects.filter(availability__avail_check=avail_check)
+
+        availability.save()  # Ensure it has a primary key before using it in related objects
+
+        for date_range in avail_check_dates:
+            AvailabilityDateRange.objects.create(
+                availability=availability,
+                start_date=date_range.start_date,
+                end_date=date_range.end_date
+            )
 
     return HttpResponse("Thank you for accepting the avail check. Your availability has been updated. This is NOT A BOOKING.")
 
+
 @login_required
 def reject_availability(request):
-    return HttpResponse("Please update your availability directly if necessary.")
+    return HttpResponse("Thank you for responding. No changes were made to your availability. Please update your availability directly if necessary.")
 
 
 class BookingRequestCreateView(CreateView):

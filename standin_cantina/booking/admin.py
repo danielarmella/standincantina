@@ -5,7 +5,11 @@ from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 from django.contrib.auth.forms import UserCreationForm
 from django.core.mail import send_mail
+from django.db import transaction
 from django.db.models import F, FloatField, ExpressionWrapper
+from django import forms
+from django.forms import BaseInlineFormSet, ValidationError
+from django.forms.models import inlineformset_factory
 from django.http import HttpResponseRedirect
 from django.shortcuts import render, redirect
 from django.template.response import TemplateResponse
@@ -14,7 +18,7 @@ from django.utils.html import format_html
 from django.utils.safestring import mark_safe
 from django.utils.timezone import now
 from django.utils.translation import gettext_lazy as _
-from .forms import StandInAdminForm, ActorAdminForm
+from .forms import StandInAdminForm, ActorAdminForm, MultiStandInAvailCheckForm, AvailabilityForm
 from .models import (
     User,
     AD,
@@ -28,8 +32,9 @@ from .models import (
     DNR,
     ActorStandInMatch,
     Availability,
-    Booking,
+    AvailabilityDateRange,
     AvailCheck,
+    Booking,
     BookingRequest,
 )
 from standin_cantina.settings import EMAIL_HOST_USER
@@ -189,8 +194,7 @@ class CustomUserAdmin(UserAdmin):
 class ProjectAdmin(BaseAdmin):
     list_display = ('name', 'start_date', 'end_date',)
     search_fields = ('name', 'ads__first_name', 'ads__last_name',)
-    list_filter = ('name', 'ads__first_name', 'ads__last_name', 'start_date', 'end_date')
-    list_editable = ('start_date', 'end_date',)
+    list_filter = ('name', 'ads',)
 
     filter_horizontal = ('ads',)
 
@@ -200,9 +204,26 @@ class ADAdmin(BaseAdmin):
     list_display = ('__str__', 'email', 'phone', 'most_recent_project',)
     search_fields = ('first_name', 'last_name', 'email', 'most_recent_project',)
     list_filter = ('most_recent_project',)
-    list_editable = ('most_recent_project',)
+    list_editable = ('phone', 'most_recent_project',)
 
     autocomplete_fields = ('most_recent_project',)
+    fieldsets = (
+        ('Contact', {'fields': ('first_name', 'last_name', 'email', 'phone',)}),
+        ('Projects', {'fields': ('most_recent_project', 'list_projects',)}),
+    )
+    readonly_fields = ('list_projects',)
+
+    def list_projects(self, obj):
+        projects = obj.projects.all()
+
+        project_html = " \n".join([
+            format_html('<a class="project_link" href="{}">{}</a>', reverse('admin:booking_project_change', args=[project.id]), str(project))
+            for project in projects
+        ]) if projects else 'No projects listed.'
+
+        return mark_safe(f"{project_html}")
+
+    list_projects.short_description = "Project list"
 
 
 @admin.register(Actor)
@@ -276,13 +297,14 @@ class ActorAdmin(BaseAdmin):
     matchies.short_description = "Matched Stand-ins"
 
 
-@admin.action(description="Create Avail Checks for selected Stand-ins")
+#TODO Each AvailCheck can have multiple standins looks like this creates a separate AvailCheck for each standin instead
+@admin.action(description="Create Avail Checks for selected Stand-in(s)")
 def create_avail_checks(modeladmin, request, queryset):
     print('in create_avail_checks')
     # If the form is submitted (POST with 'apply' in request.POST)
     if request.method == "POST" and "apply" in request.POST:
         print('POST')
-        form = AvailCheckForm(request.POST)
+        form = MultiStandInAvailCheckForm(request.POST)
         if form.is_valid():
             print('form is valid')
             project = form.cleaned_data["project"]
@@ -295,8 +317,6 @@ def create_avail_checks(modeladmin, request, queryset):
                 avail_check = AvailCheck.objects.create(
                     standin=standin,
                     project=project,
-                    start_date=start_date,
-                    end_date=end_date,
                     is_accepted=False,  # Defaults to not accepted
                     # notes=notes,
                 )
@@ -307,7 +327,7 @@ def create_avail_checks(modeladmin, request, queryset):
                     message=(
                         f"Hello {standin.user.first_name},\n\n"
                         f"You have received a new availability request for {project.name}"
-                        f"from {start_date} to {end_date}.\n"
+                        f"from start_date to end_date.\n"
                         "Please log in to your account to respond."
                     ),
                     from_email=EMAIL_HOST_USER,
@@ -318,10 +338,7 @@ def create_avail_checks(modeladmin, request, queryset):
             return HttpResponseRedirect(request.get_full_path())
     else:
         # Not a POST submission: instantiate a blank form with defaults
-        form = AvailCheckForm(initial={
-            "start_date": now().date(),
-            "end_date": now().date(),
-        })
+        form = MultiStandInAvailCheckForm(initial={})
 
     context = {
         "standins": queryset,
@@ -378,6 +395,7 @@ class StandInAdmin(BaseAdmin):
 
     def height_in_feet(self, obj):
         return obj.height_ft_in()
+    
     height_in_feet.admin_order_field = 'height_in_feet_calc'  # Enable sorting
     height_in_feet.short_description = 'Height'
 
@@ -511,7 +529,7 @@ class StandInAdmin(BaseAdmin):
 
     def list_availability(self, obj):
 
-        availabilities = Availability.objects.filter(standin=obj, end_date__gte=date.today())
+        availabilities = Availability.objects.filter(standin=obj, date_ranges__end_date__gte=now().date())
 
         add_link = reverse('admin:booking_availability_add')  # URL for the Availability add form
         prefill_link = f"{add_link}?standin={obj.id}"  # Pass StandIn ID as a query parameter
@@ -630,95 +648,235 @@ class ActorStandInMatchAdmin(BaseAdmin):
         return super().add_view(request, form_url=form_url, extra_context=extra_context)
 
 
+class AvailabilityDateRangeInline(admin.StackedInline):
+    model = AvailabilityDateRange
+    extra = 1
+
+
+class AvailabilityAdminForm(forms.ModelForm):
+    # Include Booking fields manually
+    standin = forms.ModelChoiceField(queryset=StandIn.objects.all(), required=False)
+    project = forms.ModelChoiceField(queryset=Booking._meta.get_field('project').related_model.objects.all(), required=False)
+    notes_booking = forms.CharField(required=False, widget=forms.Textarea)
+
+    class Meta:
+        model = Availability
+        fields = '__all__'
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        if self.instance and self.instance.booking:
+            self.fields['project'].initial = self.instance.booking.project
+            self.fields['notes_booking'].initial = self.instance.booking.notes
+
+        # Hide booking fields unless status is 'booked'
+        if self.data.get('status', self.instance.status) != 'booked':
+            self.fields['project'].widget = forms.HiddenInput()
+            self.fields['notes_booking'].widget = forms.HiddenInput()
+
+    def clean(self):
+        cleaned_data = super().clean()
+        status = cleaned_data.get('status')
+
+        if status == 'booked':
+            project = cleaned_data.get('project')
+            notes_booking = cleaned_data.get('notes_booking')
+
+            if not project:
+                raise forms.ValidationError("Project is required for a Booking.")
+            
+            cleaned_data['booking_data'] = {
+                'project': project,
+                'notes': notes_booking,
+            }
+
+        return cleaned_data
+    
+
 @admin.register(Availability)
 class AvailabilityAdmin(BaseAdmin):
-    list_display = ('standin', 'start_date', 'end_date', 'status', 'booked',)
-    search_fields = ('standin__user__first_name', 'standin__user__last_name', 'start_date', 'end_date',)
-    list_filter = ('standin', 'start_date', 'end_date', 'status', 'notes',)
+    list_display = ('standin', 'status', 'booking',)
+    search_fields = ('standin__user__first_name', 'standin__user__last_name',)
+    list_filter = ('standin', 'status', 'booking',)
 
-    autocomplete_fields = ('standin', 'booked',)
-
-
-@admin.register(Booking)
-class BookingAdmin(BaseAdmin):
-    list_display = ('standin', 'project', 'start_date', 'end_date', 'email_reminder_sent',)
-    search_fields = ('standin__user__first_name', 'standin__user__last_name', 'project__name', 'start_date', 'end_date',)
-    list_filter = ('standin', 'project', 'start_date', 'end_date',)
-
-    autocomplete_fields = ('standin', 'project',)
+    form = AvailabilityAdminForm
+    inlines = [AvailabilityDateRangeInline]
+    autocomplete_fields = ('standin', 'booking',)
     fieldsets = (
-        ('', {'fields': ('standin', 'project', 'start_date', 'end_date',)}),
-        ('Reminders', {'fields': ('email_reminder_sent',)})
+        ('', {'classes': ['wide', 'col col6'],'fields': ('standin', 'list_dates', 'notes', 'status',)}),
     )
+    readonly_fields = ('list_dates',)
+
+    def list_dates(self, obj):
+        dates = obj.date_ranges.all()
+        add_link = reverse('admin:booking_availabilitydaterange_add')  # URL for the HairColor add form
+        prefill_link = f"{add_link}?availability={obj.id}"  # Pass StandIn ID as a query parameter
+
+        dates_html = " \n".join([
+            format_html('<a class="date_link" href="{}">{}</a>', reverse('admin:booking_availabilitydaterange_change', args=[date.id]), str(date))
+            for date in dates
+        ]) if dates else 'No dates listed.'
+
+        # Append the "Add" button/link
+        add_button_html = format_html('<a href="{}" class="button">Add Date</a>', prefill_link)
+
+        return mark_safe(f"{dates_html} {add_button_html}")
+    list_dates.short_description = "Availability Dates"
+
+    def save_model(self, request, obj, form, change):
+        booking_data = form.cleaned_data.get('booking_data')
+        obj.save()
+
+        if obj.status == 'booked':
+            if hasattr(obj, 'booking'):
+                # Update existing booking
+                booking = obj.booking
+                booking.project = booking_data['project']
+                booking.notes = booking_data['notes']
+                booking.save()
+            else:
+                # Create new booking
+                Booking.objects.create(
+                    availability=obj,
+                    standin=obj.standin,
+                    project=booking_data['project'],
+                    notes=booking_data['notes']
+                )
+        elif hasattr(obj, 'booking'):
+            # If status changed *from* 'booked', delete associated booking
+            obj.booking.delete()
+
+
+# Inline Availability for AvailCheck creation
+class AvailabilityDateRangeInlineForAvailCheck(admin.StackedInline):
+    model = AvailabilityDateRange
+    extra = 1
+
+
+class AvailabilityInlineForAvailCheck(admin.StackedInline):
+    model = Availability
+    fields = ['notes']
+    extra = 0
+    max_num = 1
+    can_delete = False
+    show_change_link = False
+    readonly_fields = []
+    inlines = [AvailabilityDateRangeInlineForAvailCheck]
+
+    def get_queryset(self, request):
+        return super().get_queryset(request).filter(status='avail_check')
+
+    def has_add_permission(self, request, obj=None):
+        return not Availability.objects.filter(avail_check=obj).exists() if obj else True
+
+
+@admin.register(AvailabilityDateRange)
+class AvailabilityDateRangeAdmin(BaseAdmin):
+    list_display = ('availability', 'start_date', 'end_date',)
+    list_filter = ('availability', 'start_date', 'end_date',)
 
 
 @admin.register(AvailCheck)
 class AvailCheckAdmin(BaseAdmin):
-    list_display = ('project', "start_date", "end_date", "send_avail_checks")
+    list_display = ('project', "send_avail_checks")
     list_filter = ('project',)
     actions = ["send_email_to_standin", 'send_avail_checks']
 
     # form = MultiStandInAvailCheckForm
+    inlines = [AvailabilityInlineForAvailCheck]
     autocomplete_fields = ('standins', 'project',)
+    fieldsets = (
+        ('', {'fields': ('standins', 'project', 'list_dates',)}),
+    )
+    readonly_fields = ('list_dates',)
+
+    def list_dates(self, obj):
+        dates = obj.avail_check_date_ranges.all()
+        add_link = reverse('admin:booking_availcheckdaterange_add')  # URL for the HairColor add form
+        prefill_link = f"{add_link}?avail_check={obj.id}"  # Pass StandIn ID as a query parameter
+
+        dates_html = " \n".join([
+            format_html('<a class="date_link" href="{}">{}</a>', reverse('admin:booking_availcheckdaterange_change', args=[date.id]), str(date))
+            for date in dates
+        ]) if dates else 'No dates listed.'
+
+        # Append the "Add" button/link
+        add_button_html = format_html('<a href="{}" class="button">Add Date Range</a>', prefill_link)
+
+        return mark_safe(f"{dates_html} {add_button_html}")
+
+    list_dates.short_description = "Avail Check Dates"
 
     def send_email_to_standin(self, request, queryset):
         for avail_check in queryset:
-            avail_check.send_email_notification()
+            avail_check.send_email_notifications()
     send_email_to_standin.short_description = "Send email to stand-ins"
 
     def send_avail_checks(self, obj):
         return format_html('<a href="{}">Send Email</a>', reverse("admin:booking_availcheck_changelist"))
     send_avail_checks.allow_tags = True
 
+    @transaction.atomic
+    def save_model(self, request, obj, form, change):
+        super().save_model(request, obj, form, change)
+        if not Availability.objects.filter(avail_check=obj).exists():
+            avail = Availability.objects.create(status='avail_check', avail_check=obj)
+            # Add empty date range to inline default if needed
 
-    # # @admin.action(description="Send Avail-Checks to selected Stand-Ins")
-    # def send_avail_checks(modeladmin, request, queryset):
-    #     print('STEP1')
-    #     print(f'modeladmin=\n {modeladmin}')
-    #     print(f"request.POST = {request.POST}")  # Debugging: Print form data
-    #     if "apply" in request.POST:  # If form is submitted
-    #         print('STEP2')
-    #         form = AvailCheckForm(request.POST)
-    #         if form.is_valid():
-    #             print('STEP3')
-    #             start_date = form.cleaned_data["start_date"]
-    #             end_date = form.cleaned_data["end_date"]
 
-    #             for standin in queryset:
-    #                 print('LOOP')
-    #                 avail_check = AvailCheck.objects.create(
-    #                     standin=standin,
-    #                     start_date=start_date,
-    #                     end_date=end_date
-    #                 )
+# utils.py (for accept flow)
+def create_availability_from_availcheck(availcheck, standin):
+    avail_check_avail = availcheck.availabilities.first()
+    new_avail = Availability.objects.create(
+        standin=standin,
+        status='available',
+        avail_check=availcheck,
+    )
+    for dr in avail_check_avail.date_ranges.all():
+        AvailabilityDateRange.objects.create(
+            availability=new_avail,
+            start_date=dr.start_date,
+            end_date=dr.end_date
+        )
+    return new_avail
 
-    #                 # Generate accept/reject links
-    #                 accept_url = request.build_absolute_uri(reverse('accept_availability', args=[avail_check.id]))
-    #                 reject_url = request.build_absolute_uri(reverse('reject_availability', args=[avail_check.id]))
 
-    #                 # Send email
-    #                 send_mail(
-    #                     subject="Availability Check",
-    #                     message=f"Are you available for work from {start_date} to {end_date}?\n"
-    #                             f"Accept: {accept_url}\nReject: {reject_url}",
-    #                     from_email=EMAIL_HOST_USER,
-    #                     recipient_list=[standin.user.email],
-    #                     fail_silently=False,
-    #                 )
+@admin.register(Booking)
+class BookingAdmin(BaseAdmin):
+    list_display = ('standin', 'project', 'email_reminder_sent',)
+    search_fields = ('standin__user__first_name', 'standin__user__last_name', 'project__name',)
+    list_filter = ('standin', 'project',)
 
-    #             modeladmin.message_user(request, "Availability requests sent successfully.")
-    #             return HttpResponseRedirect(request.get_full_path())  # Refresh the admin page
+    autocomplete_fields = ('standin', 'project',)
+    fieldsets = (
+        ('', {'fields': ('standin', 'project',)}),
+        ('Dates', {'fields': ('list_dates',)}),
+        ('Reminders', {'fields': ('email_reminder_sent',)})
+    )
 
-    #     else:  # Show the form
-    #         print('STEP4')
-    #         form = AvailCheckForm()
-    #         return render(request, "admin/send_avail_checks.html", {"form": form, "queryset": queryset})
+    def list_dates(self, obj):
+        dates = obj.booking_date_ranges.all()
+        add_link = reverse('admin:booking_bookingdaterange_add')  # URL for the HairColor add form
+        prefill_link = f"{add_link}?booking={obj.id}"  # Pass StandIn ID as a query parameter
+
+        dates_html = " \n".join([
+            format_html('<a class="date_link" href="{}">{}</a>', reverse('admin:booking_bookingdaterange_change', args=[date.id]), str(date))
+            for date in dates
+        ]) if dates else 'No dates listed.'
+
+        # Append the "Add" button/link
+        add_button_html = format_html('<a href="{}" class="button">Add Date</a>', prefill_link)
+
+        return mark_safe(f"{dates_html} {add_button_html}")
+
+    list_dates.short_description = "Booking Dates"
 
 
 @admin.register(BookingRequest)
 class BookingRequestAdmin(BaseAdmin):
-    list_display = ("project", "ad", "start_date", "end_date", "status", "check_status",)
-    list_filter = ("project", "ad", "status", "start_date", "end_date",)
+    list_display = ("project", "ad", "status", "check_status",)
+    list_filter = ("project", "ad", "status",)
     search_fields = ("project__name", "ad__first_name", "ad__email",)
 
     actions = ["approve_booking_request", "reject_booking_request"]

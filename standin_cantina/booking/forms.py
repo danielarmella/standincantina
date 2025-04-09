@@ -6,7 +6,7 @@ from django.contrib.admin.widgets import AdminDateWidget, AutocompleteSelect
 from django.contrib.auth.forms import UserCreationForm
 from django.core.exceptions import ValidationError
 from django.core.mail import send_mail
-from django.forms import MultiWidget, MultiValueField, IntegerField
+from django.forms import MultiWidget, MultiValueField, IntegerField, inlineformset_factory
 from django.http import HttpResponseRedirect
 from django.shortcuts import render
 from django.template.loader import render_to_string
@@ -26,6 +26,7 @@ from .models import (
     DNR,
     ActorStandInMatch,
     Availability,
+    AvailabilityDateRange,
     Booking,
     AvailCheck,
     BookingRequest,
@@ -61,6 +62,7 @@ class HeightWidget(MultiWidget):
             inches = value % 12
             return [feet, inches]
         return [None, None]
+
 
 class HeightField(MultiValueField):
     def __init__(self, *args, **kwargs):
@@ -152,7 +154,7 @@ class ActorForm(forms.ModelForm):
 class ProjectForm(forms.ModelForm):
     class Meta:
         model = Project
-        fields = ['name', 'start_date', 'end_date', 'ads']
+        fields = ['name', 'ads']
         widgets = {
             'start_date': forms.DateInput(attrs={'type': 'date'}),
             'end_date': forms.DateInput(attrs={'type': 'date'}),
@@ -258,21 +260,53 @@ class ActorStandInMatchForm(forms.ModelForm):
 class AvailabilityForm(forms.ModelForm):
     class Meta:
         model = Availability
-        fields = ['standin', 'start_date', 'end_date']
+        fields = ['standin', 'status', 'notes', 'avail_check', 'booking']  # Include other relevant fields
         widgets = {
-            'start_date': forms.DateInput(attrs={'type': 'date'}),
-            'end_date': forms.DateInput(attrs={'type': 'date'}),
+            'notes': forms.Textarea(attrs={'rows': 3}),
         }
+
+
+class AvailabilityDateRangeForm(forms.ModelForm):
+    class Meta:
+        model = AvailabilityDateRange
+        fields = ['start_date', 'end_date']
+
+    def clean(self):
+        super().clean()
+        start_date = self.cleaned_data.get("start_date")
+        end_date = self.cleaned_data.get("end_date")
+
+        if start_date and end_date:
+            if end_date < start_date:
+                raise forms.ValidationError("End date must be after start date.")
+            if (end_date - start_date).days > 365:
+                raise forms.ValidationError("Date range cannot exceed 1 year.")
+            
+        # widgets = {
+        #     'start_date': forms.DateInput(attrs={'type': 'date'}),
+        #     'end_date': forms.DateInput(attrs={'type': 'date'}),
+        # }
+
+
+AvailabilityDateRangeFormSet = inlineformset_factory(
+    Availability,
+    AvailabilityDateRange,
+    form=AvailabilityDateRangeForm,
+    extra=1,
+    min_num=1,
+    validate_min=True,
+    can_delete=True
+)
 
 
 class BookingForm(forms.ModelForm):
     class Meta:
         model = Booking
-        fields = ['standin', 'project', 'start_date', 'end_date', 'email_reminder_sent']
-        widgets = {
-            'start_date': forms.DateInput(attrs={'type': 'date'}),
-            'end_date': forms.DateInput(attrs={'type': 'date'}),
-        }
+        fields = ['standin', 'project', 'email_reminder_sent']
+        # widgets = {
+        #     'start_date': forms.DateInput(attrs={'type': 'date'}),
+        #     'end_date': forms.DateInput(attrs={'type': 'date'}),
+        # }
 
 
 # Might be Deprecated since stand-in field was changed to ManyToManyField
@@ -303,26 +337,25 @@ class BookingForm(forms.ModelForm):
 #         # }
 
 
-# class MultiStandInAvailCheckForm(forms.ModelForm):
-#     # Replace the standin field with a multiple choice field.
-#     standins = forms.ModelMultipleChoiceField(
-#         queryset=StandIn.objects.all(),
-#         widget=forms.SelectMultiple,  # You can also use an autocomplete widget if desired
-#         label="Stand-ins"
-#     )
+class MultiStandInAvailCheckForm(forms.ModelForm):
+    standins = forms.ModelMultipleChoiceField(
+        queryset=StandIn.objects.all(),
+        widget=forms.SelectMultiple,  # You can also use an autocomplete widget if desired
+        label="Stand-ins"
+    )
 
-#     class Meta:
-#         model = AvailCheck
-#         fields = ['standins', 'project', 'start_date', 'end_date']
-#         widgets = {
-#             'project': AutocompleteSelect(AvailCheck._meta.get_field('project').remote_field, admin.site),
-#             'start_date': AdminDateWidget(),
-#             'end_date': AdminDateWidget(),
-#         }
-#         help_texts = {
-#             'start_date': "yyyy-mm-dd",
-#             'end_date': "yyyy-mm-dd",
-#         }
+    class Meta:
+        model = AvailCheck
+        fields = ['standins', 'project']
+        widgets = {
+            'project': AutocompleteSelect(AvailCheck._meta.get_field('project').remote_field, admin.site),
+            'start_date': AdminDateWidget(),
+            'end_date': AdminDateWidget(),
+        }
+        help_texts = {
+            'start_date': "yyyy-mm-dd",
+            'end_date': "yyyy-mm-dd",
+        }
 
 
 class BookingRequestForm(forms.ModelForm):

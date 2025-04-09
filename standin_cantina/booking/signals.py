@@ -23,12 +23,12 @@ def send_booking_reminder(sender, instance, created, **kwargs):
         instance.email_reminder_sent = True
         instance.save()
 
-
-# Deleting a Booking will make stand-in available
-@receiver(post_delete, sender=Booking)
-def make_standin_available(sender, instance, **kwargs):
-    availability = Availability.objects.create(standin=instance.standin, start_date=instance.start_date, end_date=instance.end_date, status='available', booked=None, notes=f"Booking for {instance.project} canceled. Stand-in released and is showing available.")
-    print(availability)
+# Handled in Booking save method
+# # Deleting a Booking will make stand-in available
+# @receiver(post_delete, sender=Booking)
+# def make_standin_available(sender, instance, **kwargs):
+#     availability = Availability.objects.create(standin=instance.standin, start_date=instance.start_date, end_date=instance.end_date, status='available', booked=None, notes=f"Booking for {instance.project} canceled. Stand-in released and is showing available.")
+#     print(availability)
 
 
 #Send SMS meggases

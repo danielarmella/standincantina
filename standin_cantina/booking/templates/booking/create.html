@@ -1,0 +1,30 @@
+<form method="POST">
+    {% csrf_token %}
+    {{ form.as_p }}
+  
+    <div id="date-ranges">
+      {{ formset.management_form }}
+      {% for form in formset %}
+        <div class="date-range-form">
+          {{ form.as_p }}
+        </div>
+      {% endfor %}
+    </div>
+  
+    <button type="button" id="add-date-range">Add another date range</button>
+    <button type="submit">Save</button>
+  </form>
+  
+  <script>
+    const addButton = document.getElementById("add-date-range");
+    const formsetDiv = document.getElementById("date-ranges");
+    let totalForms = document.getElementById("id_date_ranges-TOTAL_FORMS");
+  
+    addButton.addEventListener("click", function () {
+      const formCount = parseInt(totalForms.value);
+      const newForm = formsetDiv.querySelector(".date-range-form").cloneNode(true);
+      newForm.innerHTML = newForm.innerHTML.replace(/-0-/g, `-${formCount}-`);
+      newForm.innerHTML = newForm.innerHTML.replace(/_0_/g, `_${formCount}_`);
+      formsetDiv.appendChild(newForm);
+      totalForms.value = formCount + 1;
+    });

@@ -45,35 +45,34 @@ function getCSRFToken() {
 
 function load_nav() {
     document.querySelectorAll('.nav-link').forEach(nav_link => {
-        nav_link.addEventListener('click', (event) => {
-            event.preventDefault();
-            switch (nav_link.dataset.view) {
-                case 'home':
-                    load_home();
-                    break;
-                case 'register_user':
-                    load_register_user();
-                    break;
-                case 'register_standin':
-                    load_register_standin();
-                    break;
-                case 'registration_pending':
-                    break;
-                case 'login':
-                    load_login();
-                    break;
-                case 'user_account':
-                    load_user_account();
-                    break;
-                case 'standin_profile':
-                    load_standin_profile();
-                    break;
-                case 'logout':
-                    load_logout();
-                    break;
-            }
-            view_switcher(nav_link.dataset.view);
-        });
+        if (nav_link.dataset.view != 'logout') {
+            nav_link.addEventListener('click', (event) => {
+                event.preventDefault();
+                switch (nav_link.dataset.view) {
+                    case 'home':
+                        load_home();
+                        break;
+                    case 'register_user':
+                        load_register_user();
+                        break;
+                    case 'register_standin':
+                        load_register_standin();
+                        break;
+                    case 'registration_pending':
+                        break;
+                    case 'login':
+                        load_login();
+                        break;
+                    case 'user_account':
+                        load_user_account();
+                        break;
+                    case 'standin_profile':
+                        load_standin_profile();
+                        break;
+                }
+                view_switcher(nav_link.dataset.view);
+            });
+        }
     })
 }
 
@@ -576,19 +575,42 @@ async function load_availchecks(user_id) {
             avail_check_li.setAttribute('id', `avail_check_li_${avail_check.pk}`);
             avail_checks_ul.appendChild(avail_check_li);
 
-
+            // Create Accept Avail Check Button
             const accept_btn = document.createElement('button');
-            accept_btn.classList = 'btn';
-            accept_btn.
+            accept_btn.id = `accept_${avail_check['id']}`;
+            accept_btn.classList = 'btn accept_btn';
+            accept_btn.addEventListener('click', accept_availcheck(avail_check['id'])) 
+
+            // Create Reject Avail Check Button
+            const reject_btn = document.createElement('button');
+            reject_btn.id = `reject_${avail_check['id']}`;
+            reject_btn.classList = 'btn reject_btn';
+            reject_btn.addEventListener('click', reject_availcheck(avail_check['id'])) 
         })
-
-        
-
-
     })
 }
 
 
-function load_logout() {
-
+async function accept_availcheck(avail_check_id) {
+    if (confirm("Accept Avail Check?")) {
+        await fetch(`accept_availcheck/${avail_check_id}`, {
+            method: 'GET',
+            headers: {
+                'content-type': 'application/json',
+            }
+        })
+        .then(response => response.json())
+        .then(data => {
+            console.log(data);
+            // TO DO:
+            // If accept succeds make button light up and disabled
+            const accept_btn = document.querySelector(`#accept_${avail_check_id}`);
+            accept_btn.classList.add('disabled');
+            accept_btn.attributes.add('disabled');
+            // else display failure message
+        });
+    }
 }
+
+
+async function reject_availcheck(avail_check_id) {}

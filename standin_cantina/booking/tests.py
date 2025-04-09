@@ -1,19 +1,106 @@
+from datetime import date, timedelta
 
 from django.test import TestCase
-from django.utils.timezone import now, timedelta
-from .models import User, StandIn, Availability, AvailabilityDateRange, Booking, BookingDateRange
+from django.core.exceptions import ValidationError
+from django.utils.timezone import now
+from .models import (
+    User,
+    AD,
+    Actor,
+    Project,
+    StandIn,
+    HairColor,
+    Incident,
+    MediaUpload,
+    Review,
+    DNR,
+    ActorStandInMatch,
+    Availability,
+    AvailabilityDateRange,
+    Booking,
+    BookingDateRange,
+    AvailCheck,
+    AvailCheckDateRange,
+    BookingRequest,
+)
+
+USER1 = User.objects.create(
+            username='',
+            first_name='Testo',
+            last_name='Testerson',
+            email='daniel.armella2+testo.testerson@gmail.com',
+            password='p@+_@l(&4f3%%pc-',
+            is_staff=False,
+            is_active=True,
+            is_superuser=False,
+            last_login=now(),
+            date_joined=now(),
+            is_approved=True,
+            is_standin=True,
+            phone=12159177265,
+            birthday=date(1991,2,3)
+        )
+STANDIN1 = StandIn.objects.create(
+            user=USER1,
+            gender='male',
+            height_in_inches=73,
+            skin_tone='medium'
+)
+PROJECT_A = Project.objects.create(name='Project A')
+PROJECT_B = Project.objects.create(name='Project B')
+
+class UserModelTest(TestCase):
+    
+    def setUp(self):
+        self.user = USER1
+
+
+class ProjectModelTest(TestCase):
+    pass
+
+
+class ADModelTest(TestCase):
+    pass
+
+
+class ActorModelTest(TestCase):
+    pass
+
+
+class StandInModelTest(TestCase):
+    pass
+
+
+class HairColorModelTest(TestCase):
+    pass
+
+
+class IncidentModelTest(TestCase):
+    pass
+
+
+class MediaUploadModelTest(TestCase):
+    pass
+
+
+class ReviewModelTest(TestCase):
+    pass
+
+
+class DNRModelTest(TestCase):
+    pass
+
+
+class ActorStandInMatchModelTest(TestCase):
+    pass
+
 
 class AvailabilityModelTest(TestCase):
+
     def setUp(self):
-        # Create a StandIn for testing
-        self.user = User.objects.create(first_name="Testo", last_name="Testerson")
-        self.standin = StandIn.objects.create(user=self.user, height_in_inches=73)
-        self.booking = Booking.objects.create(
-            project="Test Project",
-            start_date=now().date() + timedelta(days=3),
-            end_date=now().date() + timedelta(days=5),
-            standin=self.stand_in
-        )
+        self.standin = STANDIN1
+        self.project_a = PROJECT_A
+        self.project_b = PROJECT_B
 
     def test_create_availability(self):
         """ Test basic availability creation. """
@@ -168,3 +255,118 @@ class AvailabilityModelTest(TestCase):
         ).delete()
 
         self.assertFalse(AvailabilityDateRange.objects.filter(id=old_range.id).exists())
+
+
+class AvailabilityDateRangeModelTest(TestCase):
+    pass
+
+
+class BookingModelTest(TestCase):
+    
+    def setUp(self):
+        self.standin = STANDIN1
+        self.project_a = PROJECT_A
+        self.project_b = PROJECT_B
+    
+    def test_create_booking_creates_availability(self):
+        booking = Booking.objects.create(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking, start_date="2025-06-01", end_date="2025-06-05")
+        booking.save()
+        
+        availability = Availability.objects.get(booking=booking)
+        self.assertEqual(availability.status, 'booked')
+        self.assertEqual(availability.standin, self.standin)
+        self.assertEqual(availability.project, self.project_a)
+    
+    def test_overlapping_booking_same_project_fails(self):
+        booking1 = Booking.objects.create(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking1, start_date="2025-06-01", end_date="2025-06-05")
+        booking1.save()
+        
+        booking2 = Booking(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking2, start_date="2025-06-03", end_date="2025-06-07")
+        
+        with self.assertRaises(ValidationError):
+            booking2.full_clean()
+    
+    def test_non_overlapping_booking_same_project_succeeds(self):
+        booking1 = Booking.objects.create(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking1, start_date="2025-06-01", end_date="2025-06-05")
+        booking1.save()
+        
+        booking2 = Booking.objects.create(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking2, start_date="2025-06-06", end_date="2025-06-10")
+        booking2.save()
+        
+        self.assertEqual(Booking.objects.count(), 2)
+    
+    def test_overlapping_booking_different_projects_fails(self):
+        booking1 = Booking.objects.create(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking1, start_date="2025-06-01", end_date="2025-06-05")
+        booking1.save()
+        
+        booking2 = Booking(standin=self.standin, project=self.project_b)
+        BookingDateRange.objects.create(booking=booking2, start_date="2025-06-03", end_date="2025-06-07")
+        
+        with self.assertRaises(ValidationError):
+            booking2.full_clean()
+    
+    def test_booking_deletion_marks_availability_as_available(self):
+        booking = Booking.objects.create(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking, start_date="2025-06-01", end_date="2025-06-05")
+        booking.save()
+        
+        availability = Availability.objects.get(booking=booking)
+        booking.delete()
+        
+        availability.refresh_from_db()
+        self.assertEqual(availability.status, 'available')
+        self.assertIsNone(availability.booking)
+    
+    def test_cannot_have_multiple_bookings_same_day(self):
+        booking1 = Booking.objects.create(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking1, start_date="2025-06-01", end_date="2025-06-05")
+        booking1.save()
+        
+        booking2 = Booking(standin=self.standin, project=self.project_b)
+        BookingDateRange.objects.create(booking=booking2, start_date="2025-06-05", end_date="2025-06-07")
+        
+        with self.assertRaises(ValidationError):
+            booking2.full_clean()
+    
+    def test_standin_change_updates_availability(self):
+        new_standin = StandIn.objects.create(name="New StandIn")
+        booking = Booking.objects.create(standin=self.standin, project=self.project_a)
+        BookingDateRange.objects.create(booking=booking, start_date="2025-06-01", end_date="2025-06-05")
+        booking.save()
+        
+        booking.standin = new_standin
+        booking.save()
+        
+        old_availability = Availability.objects.get(standin=self.standin, project=self.project_a)
+        new_availability = Availability.objects.get(standin=new_standin, project=self.project_a)
+        
+        self.assertEqual(old_availability.status, 'available')
+        self.assertEqual(old_availability.booking, None)
+        self.assertEqual(new_availability.status, 'booked')
+        self.assertEqual(new_availability.booking, booking)
+
+
+class BookingDateRangeModelTest(TestCase):
+    pass
+
+
+class AvailCheckModelTest(TestCase):
+    pass
+
+
+class AvailCheckDateRangeModelTest(TestCase):
+    pass
+
+
+class BookingRequestModelTest(TestCase):
+    pass
+
+
+class BookingRequestImageModelTest(TestCase):
+    pass
